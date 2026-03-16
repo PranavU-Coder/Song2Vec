@@ -19,5 +19,4 @@ data/**/*.csv
 
 # Plots / outputs
 outputs/
-*.png
 *.pdf
