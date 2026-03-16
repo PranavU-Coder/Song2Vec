@@ -1,0 +1,23 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+.ipynb_checkpoints/
+.vscode/
+.DS_Store
+
+# Data / audio assets (keep code repo lightweight)
+data/**/*.wav
+data/**/*.mp3
+data/**/*.flac
+data/**/*.ogg
+data/**/*.m4a
+data/**/*.csv
+
+# Plots / outputs
+outputs/
+*.png
+*.pdf
