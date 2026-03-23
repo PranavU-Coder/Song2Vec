@@ -123,7 +123,6 @@ print(f"Frame scores: {result.frame_similarity}")
 ```
 Song2Vec/
 ├── app.py                ← Flask web app entry point
-├── compare.py            ← CLI comparison tool
 ├── run.sh                ← Start web server
 ├── requirements.txt      ← Python dependencies
 ├── README.md
