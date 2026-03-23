@@ -1,8 +1,6 @@
 """Bass feature extraction.
 
-This module implements a bass-only similarity baseline.
-
-Method overview (engineering-friendly):
+Method overview:
     1) Compute STFT magnitude spectrogram
     2) Keep only bins in the bass band (default 20–250 Hz)
     3) Aggregate per-frame bass energy statistics

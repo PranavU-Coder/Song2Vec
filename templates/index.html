@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Song2Vec - Bass Pattern Similarity</title>
+    <script src="https://cdn.jsdelivr.net/npm/plotly.js@2.26.0/dist/plotly.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #fff; }
+        .minimal-card { border-top: 1px solid #000; padding-top: 16px; margin-bottom: 20px; }
+        .minimal-card h2 { font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 12px; }
+    </style>
+</head>
+<body class="text-gray-900 font-sans antialiased">
+    <div class="mx-auto max-w-4xl px-4 py-6 md:py-8">
+        <!-- Header -->
+        <header class="mb-8 md:mb-10">
+            <h1 class="text-3xl md:text-4xl font-light tracking-tight mb-1">Song2Vec</h1>
+            <p class="text-sm text-gray-700">Bass pattern similarity analysis</p>
+        </header>
+
+        <!-- Upload Section -->
+        <div class="mb-8 md:mb-10">
+            <div class="minimal-card">
+                <h2>Select Songs</h2>
+
+                <div class="mb-3 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-xs hidden" id="error"></div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                    <!-- Song 1 Upload -->
+                    <div class="border border-gray-500 rounded-lg p-4 md:p-5 text-center cursor-pointer transition hover:border-gray-700 hover:bg-gray-50" id="box1">
+                        <p class="text-xs text-gray-700 mb-1 font-medium">Song 1</p>
+                        <input type="file" id="file1" accept=".mp3,.wav,.flac,.ogg,.m4a" class="hidden">
+                        <p class="text-xs text-gray-600" id="name1">Click to upload</p>
+                    </div>
+
+                    <!-- Song 2 Upload -->
+                    <div class="border border-gray-500 rounded-lg p-4 md:p-5 text-center cursor-pointer transition hover:border-gray-700 hover:bg-gray-50" id="box2">
+                        <p class="text-xs text-gray-700 mb-1 font-medium">Song 2</p>
+                        <input type="file" id="file2" accept=".mp3,.wav,.flac,.ogg,.m4a" class="hidden">
+                        <p class="text-xs text-gray-600" id="name2">Click to upload</p>
+                    </div>
+                </div>
+
+                <div class="flex gap-2">
+                    <button class="flex-1 px-3 py-2 bg-black text-white rounded text-xs md:text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50 disabled:cursor-not-allowed" id="compareBtn">Compare</button>
+                    <button class="px-3 py-2 bg-gray-200 text-gray-900 rounded text-xs md:text-sm font-medium hover:bg-gray-300 transition" id="clearBtn">Clear</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Section -->
+        <div class="mb-8 md:mb-10 hidden" id="progress">
+            <div class="minimal-card">
+                <h2>Processing</h2>
+
+                <!-- Steps -->
+                <div class="space-y-2">
+                    <div class="flex items-start gap-3">
+                        <div class="w-5 h-5 rounded-full bg-black text-white flex items-center justify-center text-xs flex-shrink-0 mt-0.5" id="step1">✓</div>
+                        <div class="flex-1">
+                            <p class="text-xs font-medium text-gray-900">Loading songs</p>
+                            <p class="text-xs text-gray-600 mt-0.5" id="step1-status">Preparing audio files...</p>
+                        </div>
+                    </div>
+
+                    <div class="flex items-start gap-3">
+                        <div class="w-5 h-5 rounded-full border-2 border-gray-400 text-gray-400 flex items-center justify-center text-xs flex-shrink-0 mt-0.5" id="step2">○</div>
+                        <div class="flex-1">
+                            <p class="text-xs font-medium text-gray-900">Extracting bass patterns</p>
+                            <p class="text-xs text-gray-600 mt-0.5" id="step2-status">Analyzing frequencies...</p>
+                        </div>
+                    </div>
+
+                    <div class="flex items-start gap-3">
+                        <div class="w-5 h-5 rounded-full border-2 border-gray-400 text-gray-400 flex items-center justify-center text-xs flex-shrink-0 mt-0.5" id="step3">○</div>
+                        <div class="flex-1">
+                            <p class="text-xs font-medium text-gray-900">Pattern matching</p>
+                            <p class="text-xs text-gray-600 mt-0.5" id="step3-status">Comparing sequences...</p>
+                        </div>
+                    </div>
+
+                    <div class="flex items-start gap-3">
+                        <div class="w-5 h-5 rounded-full border-2 border-gray-400 text-gray-400 flex items-center justify-center text-xs flex-shrink-0 mt-0.5" id="step4">○</div>
+                        <div class="flex-1">
+                            <p class="text-xs font-medium text-gray-900">Rendering results</p>
+                            <p class="text-xs text-gray-600 mt-0.5" id="step4-status">Creating visualizations...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="mt-3 w-full bg-gray-300 rounded-full h-0.5">
+                    <div class="bg-black h-0.5 rounded-full transition-all duration-300" id="progressBar" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results" class="hidden">
+            <!-- Scores -->
+            <div class="mb-8 md:mb-10">
+                <div class="minimal-card">
+                    <h2>Similarity Score</h2>
+
+                    <div class="grid grid-cols-2 gap-4 md:gap-6">
+                        <div class="border-b border-gray-300 pb-3">
+                            <p class="text-xs text-gray-600 uppercase tracking-wider font-semibold mb-1">Bass Similarity</p>
+                            <p class="text-2xl md:text-3xl font-light tracking-tight" id="score">—</p>
+                        </div>
+                        <div class="border-b border-gray-300 pb-3">
+                            <p class="text-xs text-gray-600 uppercase tracking-wider font-semibold mb-1">Matched Segments</p>
+                            <p class="text-2xl md:text-3xl font-light tracking-tight" id="segments">—</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bass Analysis -->
+            <div class="mb-8 md:mb-10">
+                <div class="minimal-card">
+                    <h2>Bass Analysis (20–250 Hz)</h2>
+
+                    <!-- Song 1 Spectrogram -->
+                    <div class="mb-6 md:mb-8">
+                        <div class="mb-2">
+                            <p class="text-xs font-semibold text-gray-900">Song 1 – Bass Spectrogram</p>
+                            <p class="text-xs text-gray-600 mt-0.5">Brightness indicates bass energy intensity</p>
+                        </div>
+                        <div class="border border-gray-300 rounded bg-white overflow-hidden">
+                            <div id="chart1" style="height: 240px;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Song 2 Spectrogram -->
+                    <div class="mb-6 md:mb-8">
+                        <div class="mb-2">
+                            <p class="text-xs font-semibold text-gray-900">Song 2 – Bass Spectrogram</p>
+                            <p class="text-xs text-gray-600 mt-0.5">Brightness indicates bass energy intensity</p>
+                        </div>
+                        <div class="border border-gray-300 rounded bg-white overflow-hidden">
+                            <div id="chart2" style="height: 240px;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Alignment Chart -->
+                    <div class="mb-4">
+                        <div class="mb-2">
+                            <p class="text-xs font-semibold text-gray-900">Pattern Alignment Over Time</p>
+                            <p class="text-xs text-gray-600 mt-0.5">Shows bass pattern similarity at each moment</p>
+                        </div>
+                        <div class="border border-gray-300 rounded bg-white overflow-hidden">
+                            <div id="chart3" style="height: 260px;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Matched Segments -->
+                    <div id="segments-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const file1 = document.getElementById('file1');
+        const file2 = document.getElementById('file2');
+        const box1 = document.getElementById('box1');
+        const box2 = document.getElementById('box2');
+        const name1 = document.getElementById('name1');
+        const name2 = document.getElementById('name2');
+        const compareBtn = document.getElementById('compareBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const progressSection = document.getElementById('progress');
+        const progressBar = document.getElementById('progressBar');
+        const results = document.getElementById('results');
+        const errorDiv = document.getElementById('error');
+
+        let selectedFile1 = null;
+        let selectedFile2 = null;
+
+        // File upload handling
+        [box1, box2].forEach((box, idx) => {
+            const fileInput = idx === 0 ? file1 : file2;
+            const nameDisplay = idx === 0 ? name1 : name2;
+
+            box.addEventListener('click', () => fileInput.click());
+
+            box.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                box.classList.add('border-gray-400', 'bg-gray-50');
+            });
+
+            box.addEventListener('dragleave', () => {
+                box.classList.remove('border-gray-400', 'bg-gray-50');
+            });
+
+            box.addEventListener('drop', (e) => {
+                e.preventDefault();
+                box.classList.remove('border-gray-400', 'bg-gray-50');
+                if (e.dataTransfer.files.length > 0) {
+                    fileInput.files = e.dataTransfer.files;
+                    handleFileSelect(fileInput, nameDisplay, idx);
+                }
+            });
+
+            fileInput.addEventListener('change', () => {
+                handleFileSelect(fileInput, nameDisplay, idx);
+            });
+        });
+
+        function handleFileSelect(input, nameDisplay, idx) {
+            const file = input.files[0];
+            if (!file) return;
+
+            if (idx === 0) {
+                selectedFile1 = file;
+                name1.textContent = file.name;
+            } else {
+                selectedFile2 = file;
+                name2.textContent = file.name;
+            }
+        }
+
+        compareBtn.addEventListener('click', compareSongs);
+        clearBtn.addEventListener('click', resetUI);
+
+        function updateProgress(step, status, percent) {
+            // Update steps
+            for (let i = 1; i <= 4; i++) {
+                const stepEl = document.getElementById(`step${i}`);
+                if (i < step) {
+                    stepEl.textContent = '✓';
+                    stepEl.className = 'w-5 h-5 rounded-full bg-black text-white flex items-center justify-center text-xs flex-shrink-0 mt-0.5';
+                } else if (i === step) {
+                    stepEl.textContent = '⟳';
+                    stepEl.className = 'w-5 h-5 rounded-full bg-black text-white flex items-center justify-center text-xs flex-shrink-0 mt-0.5 animate-spin';
+                } else {
+                    stepEl.textContent = '○';
+                    stepEl.className = 'w-5 h-5 rounded-full border-2 border-gray-400 text-gray-400 flex items-center justify-center text-xs flex-shrink-0 mt-0.5';
+                }
+
+                const statusEl = document.getElementById(`step${i}-status`);
+                if (i === step) {
+                    statusEl.textContent = status;
+                }
+            }
+
+            // Update progress bar
+            progressBar.style.width = percent + '%';
+        }
+
+        async function compareSongs() {
+            if (!selectedFile1 || !selectedFile2) {
+                showError('Please select both songs');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('song_a', selectedFile1);
+            formData.append('song_b', selectedFile2);
+
+            progressSection.classList.remove('hidden');
+            results.classList.add('hidden');
+            errorDiv.classList.add('hidden');
+            compareBtn.disabled = true;
+
+            updateProgress(1, 'Loading songs...', 5);
+
+            let progressInterval;
+            try {
+                // Simulate progress updates while waiting
+                let currentPercent = 5;
+                progressInterval = setInterval(() => {
+                    if (currentPercent < 95) {
+                        currentPercent += Math.random() * 20;
+                        if (currentPercent > 95) currentPercent = 95;
+
+                        if (currentPercent < 30) {
+                            updateProgress(1, 'Loading songs...', currentPercent);
+                        } else if (currentPercent < 60) {
+                            updateProgress(2, 'Extracting bass patterns...', currentPercent);
+                        } else if (currentPercent < 85) {
+                            updateProgress(3, 'Matching patterns...', currentPercent);
+                        } else {
+                            updateProgress(4, 'Rendering results...', currentPercent);
+                        }
+                    }
+                }, 300);
+
+                console.log('Sending comparison request...');
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5 minute timeout
+
+                const response = await fetch('/api/compare', {
+                    method: 'POST',
+                    body: formData,
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+                clearInterval(progressInterval);
+                updateProgress(4, 'Rendering results...', 95);
+
+                if (!response.ok) {
+                    let errorMsg = 'Comparison failed';
+                    try {
+                        const contentType = response.headers.get('content-type');
+                        if (contentType && contentType.includes('application/json')) {
+                            const errorData = await response.json();
+                            errorMsg = errorData.error || errorMsg;
+                        } else {
+                            errorMsg = `Server error: ${response.status} ${response.statusText}`;
+                        }
+                    } catch (e) {
+                        console.error('Error parsing error response:', e);
+                        errorMsg = `Server error: ${response.status} ${response.statusText}`;
+                    }
+                    throw new Error(errorMsg);
+                }
+
+                let data;
+                try {
+                    const contentType = response.headers.get('content-type');
+                    if (!contentType || !contentType.includes('application/json')) {
+                        throw new Error('Server returned non-JSON response');
+                    }
+                    data = await response.json();
+                    console.log('Response received:', data);
+                } catch (e) {
+                    console.error('JSON parse error:', e);
+                    throw new Error('Failed to parse response data: ' + e.message);
+                }
+
+                console.log('Displaying results...');
+                displayResults(data);
+                updateProgress(4, 'Complete!', 100);
+
+                // Hide progress after a moment
+                setTimeout(() => {
+                    progressSection.classList.add('hidden');
+                }, 1000);
+            } catch (err) {
+                console.error('Comparison error:', err);
+                if (err.name === 'AbortError') {
+                    showError('Request timeout - analysis took too long');
+                } else {
+                    showError(err.message || 'An unexpected error occurred');
+                }
+                progressSection.classList.add('hidden');
+            } finally {
+                if (progressInterval) clearInterval(progressInterval);
+                compareBtn.disabled = false;
+            }
+        }
+
+        function displayResults(data) {
+            try {
+                // Validate response data structure
+                if (!data || !data.similarity || !data.song_a || !data.song_b) {
+                    throw new Error('Invalid response structure - missing required fields');
+                }
+
+                // Validate similarity data
+                if (typeof data.similarity.overall_similarity !== 'number' || !Array.isArray(data.similarity.matched_segments)) {
+                    throw new Error('Invalid similarity data structure');
+                }
+
+                // Update similarity score
+                const sim = data.similarity.overall_similarity;
+                document.getElementById('score').textContent = (sim * 100).toFixed(1) + '%';
+                document.getElementById('segments').textContent = data.similarity.matched_segments.length;
+
+                // Display matched segments with frame rate calculation
+                const segmentsList = document.getElementById('segments-list');
+                const maxDuration = Math.max(data.song_a.duration_seconds, data.song_b.duration_seconds);
+
+                if (data.similarity.matched_segments.length > 0) {
+                    let html = '<div class="mt-4"><p class="text-xs font-semibold text-gray-900 mb-2">Matched Bass Patterns</p>';
+                    data.similarity.matched_segments.forEach(seg => {
+                        // Calculate frame count to get accurate time
+                        const totalFrames = data.similarity.frame_similarity.length;
+                        const frameRate = totalFrames / maxDuration;
+                        const startTime = (seg.start_frame / frameRate).toFixed(1);
+                        const endTime = (seg.end_frame / frameRate).toFixed(1);
+
+                        html += `<div class="p-3 border-l-2 border-gray-900 bg-gray-50 rounded mb-2">
+                            <p class="text-xs font-medium text-gray-900">${startTime}s – ${endTime}s</p>
+                            <p class="text-xs text-gray-600 mt-0.5">${(seg.mean_similarity * 100).toFixed(0)}% match</p>
+                        </div>`;
+                    });
+                    html += '</div>';
+                    segmentsList.innerHTML = html;
+                } else {
+                    segmentsList.innerHTML = '';
+                }
+
+                // Validate spectrogram data
+                if (!Array.isArray(data.song_a.S_bass_db) || !Array.isArray(data.song_a.times_s) || !Array.isArray(data.song_a.bass_freqs)) {
+                    throw new Error('Invalid spectrogram data for song A');
+                }
+                if (!Array.isArray(data.song_b.S_bass_db) || !Array.isArray(data.song_b.times_s) || !Array.isArray(data.song_b.bass_freqs)) {
+                    throw new Error('Invalid spectrogram data for song B');
+                }
+
+                // Chart 1: Song A spectrogram
+                const spec1 = {
+                    z: data.song_a.S_bass_db,
+                    x: data.song_a.times_s,
+                    y: data.song_a.bass_freqs,
+                    type: 'heatmap',
+                    showscale: true,
+                    colorbar: { title: 'dB', thickness: 10, len: 0.7, x: 1.02, tickfont: { size: 9 } }
+                };
+
+                Plotly.newPlot('chart1', [spec1], {
+                    xaxis: {
+                        title: 'Time (s)',
+                        showgrid: false,
+                        zeroline: false,
+                        tickfont: { size: 9 }
+                    },
+                    yaxis: {
+                        title: 'Frequency (Hz)',
+                        showgrid: false,
+                        zeroline: false,
+                        tickfont: { size: 9 }
+                    },
+                    margin: { l: 45, r: 35, b: 35, t: 5 },
+                    plot_bgcolor: '#fff',
+                    paper_bgcolor: '#fff',
+                    font: { family: 'sans-serif', color: '#000', size: 10 }
+                }, { responsive: true, displayModeBar: false, staticPlot: false }).catch(err => {
+                    console.error('Plotly error for chart1:', err);
+                    throw new Error('Failed to render song 1 spectrogram');
+                });
+
+                // Chart 2: Song B spectrogram
+                const spec2 = {
+                    z: data.song_b.S_bass_db,
+                    x: data.song_b.times_s,
+                    y: data.song_b.bass_freqs,
+                    type: 'heatmap',
+                    showscale: true,
+                    colorbar: { title: 'dB', thickness: 10, len: 0.7, x: 1.02, tickfont: { size: 9 } }
+                };
+
+                Plotly.newPlot('chart2', [spec2], {
+                    xaxis: {
+                        title: 'Time (s)',
+                        showgrid: false,
+                        zeroline: false,
+                        tickfont: { size: 9 }
+                    },
+                    yaxis: {
+                        title: 'Frequency (Hz)',
+                        showgrid: false,
+                        zeroline: false,
+                        tickfont: { size: 9 }
+                    },
+                    margin: { l: 45, r: 35, b: 35, t: 5 },
+                    plot_bgcolor: '#fff',
+                    paper_bgcolor: '#fff',
+                    font: { family: 'sans-serif', color: '#000', size: 10 }
+                }, { responsive: true, displayModeBar: false, staticPlot: false }).catch(err => {
+                    console.error('Plotly error for chart2:', err);
+                    throw new Error('Failed to render song 2 spectrogram');
+                });
+
+                // Chart 3: Frame similarity with highlight
+                if (!Array.isArray(data.similarity.frame_similarity)) {
+                    throw new Error('Invalid frame similarity data');
+                }
+
+                const frameSimilarity = data.similarity.frame_similarity;
+                const timeAxis = Array.from(
+                    { length: frameSimilarity.length },
+                    (_, i) => (i / frameSimilarity.length) * maxDuration
+                );
+
+                const matchedTrace = {
+                    x: timeAxis,
+                    y: Array(timeAxis.length).fill(1),
+                    fill: 'tozeroy',
+                    fillcolor: 'rgba(0, 0, 0, 0.08)',
+                    line: { color: 'rgba(0, 0, 0, 0)' },
+                    name: 'Matched regions',
+                    hoverinfo: 'skip',
+                    showlegend: false
+                };
+
+                const frameSim = {
+                    x: timeAxis,
+                    y: frameSimilarity,
+                    type: 'scatter',
+                    mode: 'lines',
+                    fill: 'tozeroy',
+                    line: {
+                        color: '#000',
+                        width: 1.5,
+                        shape: 'linear'
+                    },
+                    fillcolor: 'rgba(100, 100, 100, 0.2)',
+                    name: 'Similarity'
+                };
+
+                Plotly.newPlot('chart3', [matchedTrace, frameSim], {
+                    xaxis: {
+                        title: 'Time (s)',
+                        showgrid: false,
+                        zeroline: false,
+                        tickfont: { size: 9 }
+                    },
+                    yaxis: {
+                        title: 'Similarity Score',
+                        range: [0, 1],
+                        showgrid: false,
+                        zeroline: false,
+                        tickfont: { size: 9 }
+                    },
+                    margin: { l: 45, r: 40, b: 40, t: 5 },
+                    plot_bgcolor: '#fff',
+                    paper_bgcolor: '#fff',
+                    font: { family: 'sans-serif', color: '#000', size: 10 },
+                    hovermode: 'x unified',
+                    legend: { x: 0.01, y: 0.99, font: { size: 9 } }
+                }, { responsive: true, displayModeBar: false, staticPlot: false }).catch(err => {
+                    console.error('Plotly error for chart3:', err);
+                    throw new Error('Failed to render alignment chart');
+                });
+
+                results.classList.remove('hidden');
+            } catch (err) {
+                console.error('Display error:', err);
+                showError(err.message || 'Failed to display results');
+                progressSection.classList.add('hidden');
+            }
+        }
+
+        function showError(msg) {
+            errorDiv.textContent = '⚠ ' + msg;
+            errorDiv.classList.remove('hidden');
+        }
+
+        function resetUI() {
+            file1.value = '';
+            file2.value = '';
+            selectedFile1 = null;
+            selectedFile2 = null;
+            name1.textContent = 'Click to upload';
+            name2.textContent = 'Click to upload';
+            results.classList.add('hidden');
+            progressSection.classList.add('hidden');
+            errorDiv.classList.add('hidden');
+        }
+    </script>
+</body>
+</html>

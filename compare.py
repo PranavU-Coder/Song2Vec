@@ -3,9 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from features.bass_features import BassFeatureConfig, bass_feature_vector
-from similarity.similarity_engine import similarity_score
-from utils.audio_loader import load_audio, normalize_waveform
+from core import BassFeatureConfig, bass_feature_vector, load_audio, normalize_waveform, similarity_score
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

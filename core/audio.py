@@ -1,9 +1,3 @@
-"""Audio loading utilities.
-
-This module intentionally keeps I/O and waveform standardization in one place so that
-feature extractors can assume consistent inputs.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,8 +13,6 @@ PathLike = Union[str, Path]
 
 @dataclass(frozen=True)
 class AudioData:
-    """Container for audio waveform and metadata."""
-
     y: np.ndarray
     sr: int
     path: Optional[Path] = None
