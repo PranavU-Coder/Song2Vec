@@ -24,3 +24,4 @@ outputs/
 # bullshit
 .ruff_cache
 .python-version
+.pytest_cache
