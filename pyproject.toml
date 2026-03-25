@@ -1,9 +1,9 @@
 [project]
 name = "song2vec"
 version = "0.1.0"
-description = "Add your description here"
+description = "Quantifying Musical Similarity"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.10"
 dependencies = [
     "flask>=2.3.0",
     "joblib>=1.3",
