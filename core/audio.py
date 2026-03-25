@@ -47,7 +47,9 @@ def load_audio(
     return AudioData(y=y, sr=int(loaded_sr), path=p)
 
 
-def resample_audio(y: np.ndarray, orig_sr: int, target_sr: int) -> Tuple[np.ndarray, int]:
+def resample_audio(
+    y: np.ndarray, orig_sr: int, target_sr: int
+) -> Tuple[np.ndarray, int]:
     """Resample audio to a new sample rate.
 
     Args:
@@ -62,11 +64,15 @@ def resample_audio(y: np.ndarray, orig_sr: int, target_sr: int) -> Tuple[np.ndar
     if orig_sr == target_sr:
         return np.asarray(y, dtype=np.float32), int(orig_sr)
 
-    y_rs = librosa.resample(y=np.asarray(y, dtype=np.float32), orig_sr=orig_sr, target_sr=target_sr)
+    y_rs = librosa.resample(
+        y=np.asarray(y, dtype=np.float32), orig_sr=orig_sr, target_sr=target_sr
+    )
     return np.asarray(y_rs, dtype=np.float32), int(target_sr)
 
 
-def normalize_waveform(y: np.ndarray, method: str = "peak", eps: float = 1e-8) -> np.ndarray:
+def normalize_waveform(
+    y: np.ndarray, method: str = "peak", eps: float = 1e-8
+) -> np.ndarray:
     """Normalize a waveform.
 
     Supported methods:

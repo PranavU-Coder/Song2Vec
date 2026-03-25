@@ -20,3 +20,7 @@ data/**/*.csv
 # Plots / outputs
 outputs/
 *.pdf
+
+# bullshit
+.ruff_cache
+.python-version

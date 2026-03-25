@@ -46,7 +46,9 @@ def compute_bass_spectrogram_features(S_bass: np.ndarray) -> np.ndarray:
     return np.log(energy).astype(np.float32)
 
 
-def cross_correlate_patterns(pattern_a: np.ndarray, pattern_b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def cross_correlate_patterns(
+    pattern_a: np.ndarray, pattern_b: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     """Compute normalized cross-correlation between two patterns.
 
     Args:
@@ -83,7 +85,9 @@ def cross_correlate_patterns(pattern_a: np.ndarray, pattern_b: np.ndarray) -> tu
     return correlation.astype(np.float32), lags.astype(np.int32)
 
 
-def dtw_distance(a: np.ndarray, b: np.ndarray, window: int = 50) -> tuple[float, np.ndarray]:
+def dtw_distance(
+    a: np.ndarray, b: np.ndarray, window: int = 50
+) -> tuple[float, np.ndarray]:
     """Compute Dynamic Time Warping distance with Sakoe-Chiba band constraint.
 
     Args:
@@ -118,7 +122,9 @@ def dtw_distance(a: np.ndarray, b: np.ndarray, window: int = 50) -> tuple[float,
     return float(distance), cost[1:, 1:].astype(np.float32)
 
 
-def frame_wise_similarity(pattern_a: np.ndarray, pattern_b: np.ndarray, window_size: int = 5) -> np.ndarray:
+def frame_wise_similarity(
+    pattern_a: np.ndarray, pattern_b: np.ndarray, window_size: int = 5
+) -> np.ndarray:
     """Compute per-frame similarity using sliding windows.
 
     Args:
@@ -194,12 +200,14 @@ def detect_pattern_matches(
             length = end_idx - start_idx
             if length >= min_segment_length:
                 mean_sim = float(np.mean(similarities[start_idx:end_idx]))
-                segments.append({
-                    "start_frame": int(start_idx),
-                    "end_frame": int(end_idx),
-                    "length_frames": int(length),
-                    "mean_similarity": mean_sim,
-                })
+                segments.append(
+                    {
+                        "start_frame": int(start_idx),
+                        "end_frame": int(end_idx),
+                        "length_frames": int(length),
+                        "mean_similarity": mean_sim,
+                    }
+                )
             in_segment = False
 
     return segments
@@ -253,7 +261,9 @@ def match_bass_patterns(
 
     # Detect high-similarity segments
     threshold = 0.5
-    matched = detect_pattern_matches(frame_sim, threshold=threshold, min_segment_length=3)
+    matched = detect_pattern_matches(
+        frame_sim, threshold=threshold, min_segment_length=3
+    )
 
     correlation, lags = cross_correlate_patterns(energy_a, energy_b)
 

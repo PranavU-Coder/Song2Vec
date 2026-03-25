@@ -1,5 +1,10 @@
 from .audio import AudioData, load_audio, normalize_waveform, resample_audio
-from .features import BassFeatureConfig, bass_feature_vector, compute_stft_magnitude, isolate_frequency_band
+from .features import (
+    BassFeatureConfig,
+    bass_feature_vector,
+    compute_stft_magnitude,
+    isolate_frequency_band,
+)
 from .pattern_matching import (
     PatternMatch,
     cross_correlate_patterns,

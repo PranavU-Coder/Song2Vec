@@ -73,7 +73,9 @@ def downsample_array(arr: np.ndarray, target_size: int = 500) -> np.ndarray:
     return arr[::step]
 
 
-def process_song(filepath: str, sr: int = 22050, duration: int = None) -> dict[str, Any] | None:
+def process_song(
+    filepath: str, sr: int = 22050, duration: int = None
+) -> dict[str, Any] | None:
     """Load audio and extract bass features and spectrogram."""
     try:
         # Validate file exists and is readable
@@ -83,7 +85,10 @@ def process_song(filepath: str, sr: int = 22050, duration: int = None) -> dict[s
         # Check file size
         file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
         if file_size_mb > MAX_FILE_SIZE_MB:
-            return {"success": False, "error": f"File too large (max {MAX_FILE_SIZE_MB}MB)"}
+            return {
+                "success": False,
+                "error": f"File too large (max {MAX_FILE_SIZE_MB}MB)",
+            }
 
         logger.info(f"Loading audio from {Path(filepath).name}")
         audio = load_audio(filepath, sr=sr, mono=True, duration=duration)
@@ -155,12 +160,21 @@ def register_routes(app) -> None:
             file_a = request.files["song_a"]
             file_b = request.files["song_b"]
 
-            if not file_a or not file_b or file_a.filename == "" or file_b.filename == "":
+            if (
+                not file_a
+                or not file_b
+                or file_a.filename == ""
+                or file_b.filename == ""
+            ):
                 return jsonify({"error": "Invalid file uploads"}), 400
 
             if not (allowed_file(file_a.filename) and allowed_file(file_b.filename)):
                 return (
-                    jsonify({"error": "Unsupported file format. Use MP3, WAV, FLAC, OGG, or M4A"}),
+                    jsonify(
+                        {
+                            "error": "Unsupported file format. Use MP3, WAV, FLAC, OGG, or M4A"
+                        }
+                    ),
                     400,
                 )
 
@@ -173,7 +187,9 @@ def register_routes(app) -> None:
             file_b.seek(0)
 
             if size_a_mb > MAX_FILE_SIZE_MB or size_b_mb > MAX_FILE_SIZE_MB:
-                return jsonify({"error": f"Files too large (max {MAX_FILE_SIZE_MB}MB)"}), 400
+                return jsonify(
+                    {"error": f"Files too large (max {MAX_FILE_SIZE_MB}MB)"}
+                ), 400
 
             # Save temporarily with unique names
             filename_a = secure_filename(file_a.filename)
@@ -181,8 +197,12 @@ def register_routes(app) -> None:
             unique_a = str(uuid.uuid4())[:8]
             unique_b = str(uuid.uuid4())[:8]
 
-            path_a = os.path.join(tempfile.gettempdir(), f"song2vec_{unique_a}_{filename_a}")
-            path_b = os.path.join(tempfile.gettempdir(), f"song2vec_{unique_b}_{filename_b}")
+            path_a = os.path.join(
+                tempfile.gettempdir(), f"song2vec_{unique_a}_{filename_a}"
+            )
+            path_b = os.path.join(
+                tempfile.gettempdir(), f"song2vec_{unique_b}_{filename_b}"
+            )
 
             logger.info(f"Saving uploaded files to temp...")
             file_a.save(path_a)
@@ -192,12 +212,16 @@ def register_routes(app) -> None:
             logger.info("Processing song A...")
             result_a = process_song(path_a, sr=22050)
             if not result_a["success"]:
-                return jsonify({"error": f"Failed to process Song 1: {result_a['error']}"}), 400
+                return jsonify(
+                    {"error": f"Failed to process Song 1: {result_a['error']}"}
+                ), 400
 
             logger.info("Processing song B...")
             result_b = process_song(path_b, sr=22050)
             if not result_b["success"]:
-                return jsonify({"error": f"Failed to process Song 2: {result_b['error']}"}), 400
+                return jsonify(
+                    {"error": f"Failed to process Song 2: {result_b['error']}"}
+                ), 400
 
             # Match bass patterns
             logger.info("Matching bass patterns...")
@@ -221,7 +245,9 @@ def register_routes(app) -> None:
             S_bass_b_ds = downsample_spectrogram(result_b["S_bass"], target_frames=500)
             times_a_ds = downsample_array(result_a["times_s"], target_size=500)
             times_b_ds = downsample_array(result_b["times_s"], target_size=500)
-            frame_sim_ds = downsample_array(pattern_match.frame_similarity, target_size=500)
+            frame_sim_ds = downsample_array(
+                pattern_match.frame_similarity, target_size=500
+            )
 
             response = {
                 "song_a": {

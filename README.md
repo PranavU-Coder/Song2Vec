@@ -64,10 +64,10 @@ The system compares sequences over time using three approaches:
 
 ## Installation
 
-Create an environment and install dependencies:
+Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 **Notes:**
@@ -297,4 +297,4 @@ Song2Vec/
 
 ## License
 
-MIT.
+[MIT](https://github.com/pranshu05/Song2Vec?tab=MIT-1-ov-file)
