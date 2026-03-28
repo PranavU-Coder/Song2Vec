@@ -22,7 +22,7 @@ class StructuralSegment:
     start_frame: int
     end_frame: int
     mean_energy: float
-    label: str = ""  
+    label: str = ""
 
 
 @dataclass
@@ -70,6 +70,7 @@ def build_self_similarity_matrix(
         raise ValueError(f"Unknown metric: {metric!r}")
 
     return ssm, boundaries
+
 
 @njit(cache=True)
 def _sakoe_chiba_dtw(a: np.ndarray, b: np.ndarray, window: int) -> Tuple:
@@ -203,6 +204,7 @@ def _constrained_dtw_symmetric(
 
     return g
 
+
 def fast_dtw(
     seq_a: np.ndarray,
     seq_b: np.ndarray,
@@ -263,6 +265,7 @@ def fast_dtw(
     dist = raw / (I + J) if not np.isinf(raw) else np.inf
     return dist, g[1 : I + 1, 1 : J + 1].astype(np.float32), path
 
+
 @njit(cache=True)
 def get_keogh_envelope(query: np.ndarray, window: int) -> Tuple[np.ndarray, np.ndarray]:
     """Per-point min/max envelope of query within ±window. Precompute once per batch."""
@@ -288,9 +291,11 @@ def lb_keogh(candidate: np.ndarray, U: np.ndarray, L: np.ndarray) -> float:
             lb += (L[i] - candidate[i]) ** 2
     return lb**0.5
 
+
 def _ssm_diag(ssm: np.ndarray) -> np.ndarray:
     """Extract the main diagonal as a float32 1-D array."""
     return np.diag(ssm).astype(np.float32)
+
 
 def _assign_repeat_labels(
     ssm: np.ndarray,
@@ -417,6 +422,7 @@ def match_structural_sections(
             }
         )
     return matches
+
 
 def compare_song_structures(
     S_bass_a: np.ndarray,
