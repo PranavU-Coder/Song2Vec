@@ -1,8 +1,5 @@
 """Pattern matching for bass sequences using temporal alignment.
 
-This module detects similar bass patterns between two songs by analyzing
-how bass energy evolves over time, similar to Shazam fingerprinting.
-
 Methods:
     1. Extract bass spectrogram (20-250 Hz over time)
     2. Compute cross-correlation to find aligned segments
@@ -15,7 +12,10 @@ from __future__ import annotations
 from typing import NamedTuple
 
 import numpy as np
+from numba import njit
 from scipy import signal
+
+from .dtw import fast_dtw
 
 
 class PatternMatch(NamedTuple):
@@ -29,138 +29,130 @@ class PatternMatch(NamedTuple):
 
 
 def compute_bass_spectrogram_features(S_bass: np.ndarray) -> np.ndarray:
-    """Reduce bass spectrogram to a 1D per-frame energy envelope.
+    """Reduce bass spectrogram to a 1-D per-frame log-energy envelope.
 
     Args:
-        S_bass: Bass spectrogram shape (n_freq_bass, n_frames)
+        S_bass: shape (n_freq_bass, n_frames)
 
     Returns:
-        energy_t: shape (n_frames,) - per-frame bass energy
+        shape (n_frames,), float32 log-energy per frame.
     """
     if S_bass.size == 0:
         return np.array([], dtype=np.float32)
-
-    # Sum energy across frequency bins, log scale
     energy = np.sum(S_bass**2, axis=0)
-    energy = np.maximum(energy, 1e-10)  # Avoid log(0)
-    return np.log(energy).astype(np.float32)
+    return np.log(np.maximum(energy, 1e-10)).astype(np.float32)
 
 
 def cross_correlate_patterns(
     pattern_a: np.ndarray, pattern_b: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute normalized cross-correlation between two patterns.
-
-    Args:
-        pattern_a, pattern_b: 1D bass energy sequences
-
-    Returns:
-        correlation: cross-correlation values
-        lags: lag positions
-    """
-    # Normalize patterns
+    """Normalised cross-correlation between two 1-D bass energy sequences."""
     a = np.asarray(pattern_a, dtype=np.float32)
     b = np.asarray(pattern_b, dtype=np.float32)
 
     if a.size == 0 or b.size == 0:
         return np.array([], dtype=np.float32), np.array([], dtype=np.int32)
 
-    # Standardize
-    a_std = np.std(a)
-    b_std = np.std(b)
-
+    a_std, b_std = np.std(a), np.std(b)
     if a_std < 1e-8 or b_std < 1e-8:
         return np.array([], dtype=np.float32), np.array([], dtype=np.int32)
 
     a_norm = (a - np.mean(a)) / a_std
     b_norm = (b - np.mean(b)) / b_std
 
-    # Cross-correlate
     correlation = signal.correlate(a_norm, b_norm, mode="full", method="auto")
     lags = signal.correlation_lags(len(a_norm), len(b_norm), mode="full")
-
-    # Normalize by length
-    correlation = correlation / max(len(a_norm), len(b_norm))
+    correlation /= max(len(a_norm), len(b_norm))
 
     return correlation.astype(np.float32), lags.astype(np.int32)
 
 
 def dtw_distance(
-    a: np.ndarray, b: np.ndarray, window: int = 50
+    a: np.ndarray, b: np.ndarray, window: int = 1
 ) -> tuple[float, np.ndarray]:
-    """Compute Dynamic Time Warping distance with Sakoe-Chiba band constraint.
+    """DTW distance via fast_dtw (symmetric Sakoe-Chiba P=1, normalised by I+J).
 
     Args:
-        a, b: 1D sequences
-        window: Sakoe-Chiba band constraint (frames)
+        a, b:   1-D sequences.
+        window: FastDTW radius. Default 1 gives ~8.6% error at O(N) cost.
+                Use 2 for ~5% error. The old window=50 Sakoe-Chiba band
+                semantics are not equivalent; radius controls search width
+                around the projected path, not a global diagonal band.
 
     Returns:
-        distance: DTW distance (normalized)
-        cost_matrix: accumulated cost matrix for visualization
+        (normalised_distance, cost_matrix (I×J))
     """
     a = np.asarray(a, dtype=np.float32).flatten()
     b = np.asarray(b, dtype=np.float32).flatten()
-
     if a.size == 0 or b.size == 0:
-        return float("inf"), np.array([], dtype=np.float32)
-
-    n, m = len(a), len(b)
-
-    # Initialize cost matrix (very large values where we don't search)
-    cost = np.full((n + 1, m + 1), np.inf, dtype=np.float32)
-    cost[0, 0] = 0.0
-
-    # Fill with Sakoe-Chiba band constraint
-    for i in range(1, n + 1):
-        for j in range(1, m + 1):
-            if abs(i - j) <= window:
-                d = abs(a[i - 1] - b[j - 1])
-                cost[i, j] = d + min(cost[i - 1, j], cost[i, j - 1], cost[i - 1, j - 1])
-
-    # Normalize by path length
-    distance = cost[n, m] / (n + m)
-    return float(distance), cost[1:, 1:].astype(np.float32)
+        return np.inf, np.array([], dtype=np.float32)
+    dist, cost, _ = fast_dtw(a, b, radius=window)
+    return dist, cost
 
 
+@njit(cache=True)
 def frame_wise_similarity(
-    pattern_a: np.ndarray, pattern_b: np.ndarray, window_size: int = 5
+    energy_a: np.ndarray, energy_b: np.ndarray, window_size: int = 3
 ) -> np.ndarray:
-    """Compute per-frame similarity using sliding windows.
+    """Per-frame best cosine similarity via sliding-window context vectors.
+
+    For each frame i in energy_a, finds the most similar frame j in energy_b
+    by comparing their ±window_size context neighbourhoods with cosine
+    similarity.  Returns a 1-D array (not an N×N matrix) because only the
+    per-row maximum is needed downstream.
+
+    Complexity: O(N_a × N_b × w) — compiled by numba.
 
     Args:
-        pattern_a, pattern_b: 1D bass energy sequences
-        window_size: Frames to average for smoothing
+        energy_a, energy_b: 1-D log-energy envelopes, float32.
+        window_size:         Half-width of the context window.
 
     Returns:
-        similarities: shape (max(len_a, len_b),) with similarity at each frame
+        best_sim: shape (len(energy_a),), float32.
     """
-    a = np.asarray(pattern_a, dtype=np.float32).flatten()
-    b = np.asarray(pattern_b, dtype=np.float32).flatten()
+    n_a = len(energy_a)
+    n_b = len(energy_b)
+    best_sim = np.zeros(n_a, dtype=np.float32)
 
-    if a.size == 0 or b.size == 0:
-        return np.array([], dtype=np.float32)
+    for i in range(n_a):
+        # build context window for frame i
+        sa = max(0, i - window_size)
+        ea = min(n_a, i + window_size + 1)
+        wa = energy_a[sa:ea]
 
-    # Pad shorter sequence with edge values
-    max_len = max(len(a), len(b))
-    a_padded = np.pad(a, (0, max_len - len(a)), mode="edge")
-    b_padded = np.pad(b, (0, max_len - len(b)), mode="edge")
+        norm_a = 0.0
+        for v in wa:
+            norm_a += v * v
+        norm_a = norm_a**0.5
+        if norm_a < 1e-8:
+            continue
 
-    # Compute per-frame differences
-    frame_diffs = np.abs(a_padded - b_padded)
+        best = -1.0
+        for j in range(n_b):
+            sb = max(0, j - window_size)
+            eb = min(n_b, j + window_size + 1)
+            wb = energy_b[sb:eb]
 
-    # Normalize to [0, 1]
-    if np.max(frame_diffs) > 0:
-        frame_diffs = frame_diffs / np.max(frame_diffs)
+            norm_b = 0.0
+            for v in wb:
+                norm_b += v * v
+            norm_b = norm_b**0.5
+            if norm_b < 1e-8:
+                continue
 
-    # Convert to similarity (invert distance)
-    similarities = 1.0 - frame_diffs
+            min_len = min(len(wa), len(wb))
+            dot = 0.0
+            for k in range(min_len):
+                dot += wa[k] * wb[k]
 
-    # Smooth with window
-    if window_size > 1:
-        kernel = np.ones(window_size) / window_size
-        similarities = np.convolve(similarities, kernel, mode="same")
+            sim = dot / (norm_a * norm_b)
+            if sim > best:
+                best = sim
 
-    return similarities.astype(np.float32)
+        if best >= 0.0:
+            best_sim[i] = best
+
+    return best_sim
 
 
 def detect_pattern_matches(
@@ -168,47 +160,34 @@ def detect_pattern_matches(
     threshold: float = 0.6,
     min_segment_length: int = 5,
 ) -> list[dict]:
-    """Detect contiguous regions of high similarity.
-
-    Args:
-        similarities: Per-frame similarity scores in [0, 1]
-        threshold: Similarity threshold to consider as match
-        min_segment_length: Minimum frames for a match
-
-    Returns:
-        List of matched segments with start, end, and mean similarity
-    """
+    """detect contiguous regions above `threshold` in a 1-D similarity array."""
     if similarities.size == 0:
         return []
 
-    # Find regions above threshold
-    above_threshold = similarities >= threshold
-    if not np.any(above_threshold):
+    above = similarities >= threshold
+    if not np.any(above):
         return []
 
-    # Find contiguous segments
     segments = []
-    in_segment = False
-    start_idx = 0
+    in_seg = False
+    start = 0
 
-    for i, is_match in enumerate(np.concatenate(([False], above_threshold, [False]))):
-        if is_match and not in_segment:
-            start_idx = i
-            in_segment = True
-        elif not is_match and in_segment:
-            end_idx = i
-            length = end_idx - start_idx
+    for i, hit in enumerate(np.concatenate(([False], above, [False]))):
+        if hit and not in_seg:
+            start = i
+            in_seg = True
+        elif not hit and in_seg:
+            length = i - start
             if length >= min_segment_length:
-                mean_sim = float(np.mean(similarities[start_idx:end_idx]))
                 segments.append(
                     {
-                        "start_frame": int(start_idx),
-                        "end_frame": int(end_idx),
+                        "start_frame": int(start),
+                        "end_frame": int(i),
                         "length_frames": int(length),
-                        "mean_similarity": mean_sim,
+                        "mean_similarity": float(np.mean(similarities[start:i])),
                     }
                 )
-            in_segment = False
+            in_seg = False
 
     return segments
 
@@ -216,22 +195,21 @@ def detect_pattern_matches(
 def match_bass_patterns(
     S_bass_a: np.ndarray,
     S_bass_b: np.ndarray,
-    sr: int,
-    hop_length: int,
     use_dtw: bool = True,
+    dtw_radius: int = 1,
 ) -> PatternMatch:
     """Compare bass patterns between two spectrograms.
 
     Args:
-        S_bass_a, S_bass_b: Bass spectrograms shape (n_freq, n_frames)
-        sr: Sample rate
-        hop_length: STFT hop length in samples
-        use_dtw: If True, use DTW for alignment; else use cross-correlation
+        S_bass_a, S_bass_b: Bass spectrograms, shape (n_freq, n_frames).
+        use_dtw:            Use fast_dtw for overall alignment score;
+                            otherwise use cross-correlation peak.
+        dtw_radius:         FastDTW search radius forwarded to fast_dtw.
 
     Returns:
-        PatternMatch with similarity scores and matched regions
+        PatternMatch with scores, matched segments, correlation, and
+        per-frame similarity.
     """
-    # Extract 1D bass energy envelopes
     energy_a = compute_bass_spectrogram_features(S_bass_a)
     energy_b = compute_bass_spectrogram_features(S_bass_b)
 
@@ -244,27 +222,16 @@ def match_bass_patterns(
             frame_similarity=np.array([], dtype=np.float32),
         )
 
-    # Compute frame-by-frame similarity
     frame_sim = frame_wise_similarity(energy_a, energy_b, window_size=3)
 
-    # Compute overall alignment
     if use_dtw:
-        dtw_dist, _ = dtw_distance(energy_a, energy_b)
-        # Convert DTW distance to similarity (lower distance = higher similarity)
-        overall_sim = max(0.0, 1.0 - dtw_dist)
+        dist, _ = dtw_distance(energy_a, energy_b, window=dtw_radius)
+        overall_sim = max(0.0, 1.0 - dist)
     else:
         correlation, lags = cross_correlate_patterns(energy_a, energy_b)
-        if correlation.size > 0:
-            overall_sim = float(np.max(correlation))
-        else:
-            overall_sim = 0.0
+        overall_sim = float(np.max(correlation)) if correlation.size > 0 else 0.0
 
-    # Detect high-similarity segments
-    threshold = 0.5
-    matched = detect_pattern_matches(
-        frame_sim, threshold=threshold, min_segment_length=3
-    )
-
+    matched = detect_pattern_matches(frame_sim, threshold=0.5, min_segment_length=3)
     correlation, lags = cross_correlate_patterns(energy_a, energy_b)
 
     return PatternMatch(

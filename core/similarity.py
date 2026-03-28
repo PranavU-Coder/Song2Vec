@@ -3,25 +3,20 @@ from __future__ import annotations
 from typing import Literal
 
 import numpy as np
+from numba import njit
 
 
+@njit(cache=True)
 def cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray, eps: float = 1e-8) -> float:
-    """Compute cosine similarity in [-1, 1]."""
-
-    a = np.asarray(vec_a, dtype=np.float32).reshape(-1)
-    b = np.asarray(vec_b, dtype=np.float32).reshape(-1)
-    if a.size != b.size:
-        raise ValueError(f"Vector size mismatch: {a.size} vs {b.size}")
-
-    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    """Cosine similarity in [-1, 1]. Expects equal-length 1-D float32 arrays."""
+    denom = (vec_a**2).sum() ** 0.5 * (vec_b**2).sum() ** 0.5
     if denom < eps:
         return 0.0
-    return float(np.dot(a, b) / denom)
+    return np.dot(vec_a, vec_b) / denom
 
 
 def euclidean_distance(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
-    """Compute Euclidean distance (L2)."""
-
+    """Euclidean (L2) distance between two vectors."""
     a = np.asarray(vec_a, dtype=np.float32).reshape(-1)
     b = np.asarray(vec_b, dtype=np.float32).reshape(-1)
     if a.size != b.size:
@@ -34,26 +29,17 @@ def similarity_score(
     vec_b: np.ndarray,
     metric: Literal["cosine", "euclidean"] = "cosine",
 ) -> float:
-    """Compute a similarity score with a chosen metric.
+    """Unified similarity score.
 
-    Notes:
-        - Cosine similarity is returned as-is.
-        - Euclidean distance is converted to a bounded similarity in (0, 1] via 1/(1+d).
-
-    Args:
-        vec_a: Feature vector.
-        vec_b: Feature vector.
-        metric: "cosine" or "euclidean".
-
-    Returns:
-        Similarity score.
+    - cosine:    returned as-is from [-1, 1].
+    - euclidean: converted to (0, 1] via 1 / (1 + d).
     """
-
     if metric == "cosine":
-        return cosine_similarity(vec_a, vec_b)
-
+        a = np.asarray(vec_a, dtype=np.float32).reshape(-1)
+        b = np.asarray(vec_b, dtype=np.float32).reshape(-1)
+        if a.size != b.size:
+            raise ValueError(f"Vector size mismatch: {a.size} vs {b.size}")
+        return float(cosine_similarity(a, b))
     if metric == "euclidean":
-        d = euclidean_distance(vec_a, vec_b)
-        return float(1.0 / (1.0 + d))
-
+        return 1.0 / (1.0 + euclidean_distance(vec_a, vec_b))
     raise ValueError(f"Unknown metric: {metric!r}")
