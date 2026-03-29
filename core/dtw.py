@@ -45,14 +45,21 @@ def build_self_similarity_matrix(
     section_frames: int = 16,
     metric: str = "cosine",
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """SSM from a bass log-energy envelope. Returns (ssm [0,1], boundaries)."""
+    """SSM from a bass log-energy envelope. Returns (ssm [0,1], boundaries).
+
+    Using ceiling division so a partial trailing section is included rather
+    than silently dropped. The last section is zero-padded with edge values
+    if shorter than section_frames.
+    """
     energy = np.asarray(energy, dtype=np.float32).flatten()
     if energy.size == 0:
         return np.zeros((0, 0), dtype=np.float32), np.array([], dtype=np.int32)
 
-    n_sections = max(1, len(energy) // section_frames)
+    # include the partial trailing section
+    n_sections = max(1, int(np.ceil(len(energy) / section_frames)))
     trunc = n_sections * section_frames
-    padded = np.pad(energy[:trunc], (0, trunc - len(energy[:trunc])), mode="edge")
+    # pad the full energy array so no frames are lost
+    padded = np.pad(energy, (0, trunc - len(energy)), mode="edge")
     section_feats = padded.reshape(n_sections, section_frames)
     boundaries = np.array(
         list(range(0, trunc, section_frames)) + [len(energy)], dtype=np.int32
@@ -300,9 +307,15 @@ def lb_keogh(candidate: np.ndarray, U: np.ndarray, L: np.ndarray) -> float:
     return lb**0.5
 
 
-def _ssm_diag(ssm: np.ndarray) -> np.ndarray:
-    """Extract the main diagonal as a float32 1-D array."""
-    return np.diag(ssm).astype(np.float32)
+def _ssm_row_mean(ssm: np.ndarray) -> np.ndarray:
+    """Row-wise mean of the SSM as a float32 1-D structural descriptor.
+
+    For each section i, this is its average similarity to all other sections.
+    Low values mark unique passages; high values mark recurring ones
+    (verses/choruses). Replaces the diagonal (ssm[i,i]), which is trivially
+    near-1.0 for cosine SSMs and carries no discriminative information.
+    """
+    return ssm.mean(axis=1).astype(np.float32)
 
 
 def _assign_repeat_labels(
@@ -482,8 +495,8 @@ def compare_song_structures(
         )
     )
 
-    diag_a = _ssm_diag(ssm_a)
-    diag_b = _ssm_diag(ssm_b)
+    diag_a = _ssm_row_mean(ssm_a)
+    diag_b = _ssm_row_mean(ssm_b)
     dtw_dist, cost_mat, path_arr = fast_dtw(diag_a, diag_b, radius=fast_dtw_radius)
     dtw_sim = float(1.0 / (1.0 + dtw_dist)) if not np.isinf(dtw_dist) else 0.0
     warp_path = [
@@ -532,7 +545,7 @@ def batch_compare_structures(
         return [np.inf] * len(candidate_S_bass_list)
 
     q_ssm, _ = build_self_similarity_matrix(q_energy, section_frames, ssm_metric)
-    q_diag = _ssm_diag(q_ssm).astype(np.float64)
+    q_diag = _ssm_row_mean(q_ssm).astype(np.float64)
     U, L = get_keogh_envelope(q_diag, fast_dtw_radius)
 
     distances: List[float] = []
@@ -544,7 +557,7 @@ def batch_compare_structures(
             distances.append(np.inf)
             continue
         c_ssm, _ = build_self_similarity_matrix(c_energy, section_frames, ssm_metric)
-        c_diag = _ssm_diag(c_ssm).astype(np.float64)
+        c_diag = _ssm_row_mean(c_ssm).astype(np.float64)
         n = min(len(q_diag), len(c_diag))
         if lb_keogh(c_diag[:n], U[:n], L[:n]) >= best_dist:
             distances.append(np.inf)
