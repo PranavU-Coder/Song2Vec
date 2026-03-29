@@ -559,7 +559,11 @@ def batch_compare_structures(
         c_ssm, _ = build_self_similarity_matrix(c_energy, section_frames, ssm_metric)
         c_diag = _ssm_row_mean(c_ssm).astype(np.float64)
         n = min(len(q_diag), len(c_diag))
-        if lb_keogh(c_diag[:n], U[:n], L[:n]) >= best_dist:
+        # lb_keogh returns an unnormalised L2 distance; fast_dtw normalises by
+        # (I + J). Divide by 2n (= n + n, both sequences clipped to length n)
+        # so the lower bound is on the same scale as best_dist before comparing.
+        lb = lb_keogh(c_diag[:n], U[:n], L[:n]) / (2 * n) if n > 0 else 0.0
+        if lb >= best_dist:
             distances.append(np.inf)
             continue
         dist, _, _ = fast_dtw(
