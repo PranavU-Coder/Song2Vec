@@ -84,7 +84,12 @@ def _sakoe_chiba_dtw(a: np.ndarray, b: np.ndarray, window: int) -> Tuple:
     g[1, 1] = 2.0 * abs(a[0] - b[0])
 
     for i in range(1, I + 1):
-        for j in range(max(1, i - window), min(J, i + window) + 1):
+        j_start = max(1, i - window)
+        # skip (1,1) — already initialised above; recomputing would set it to INF
+        # because g[0,0] == INF and no P=1 predecessor exists at the origin.
+        if i == 1:
+            j_start = max(j_start, 2)
+        for j in range(j_start, min(J, i + window) + 1):
             ai, bj = i - 1, j - 1
             dij = abs(a[ai] - b[bj])
             c1 = g[i - 1, j - 1] + 2.0 * dij
@@ -194,6 +199,9 @@ def _constrained_dtw_symmetric(
     for i in range(1, I + 1):
         j_lo = max(1, int(window[i - 1, 0]) + 1)
         j_hi = min(J, int(window[i - 1, 1]) + 1)
+        # skip (1,1) — already initialised; loop would overwrite it with INF.
+        if i == 1:
+            j_lo = max(j_lo, 2)
         for j in range(j_lo, j_hi + 1):
             ai, bj = i - 1, j - 1
             dij = abs(a[ai] - b[bj])
@@ -438,7 +446,12 @@ def compare_song_structures(
 
     Builds SSMs, runs FastDTW on their diagonals, detects and matches
     segments, returns a StructuralMatch with DTW + cosine scores blended.
+
+    Raises:
+        ValueError: if both dtw_weight and ssm_weight are zero.
     """
+    if dtw_weight == 0.0 and ssm_weight == 0.0:
+        raise ValueError("dtw_weight and ssm_weight cannot both be zero.")
     from .pattern_matching import compute_bass_spectrogram_features
 
     _empty = StructuralMatch(

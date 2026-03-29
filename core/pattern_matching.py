@@ -9,6 +9,7 @@ Methods:
 
 from __future__ import annotations
 
+import warnings
 from typing import NamedTuple
 
 import numpy as np
@@ -101,6 +102,9 @@ def frame_wise_similarity(
     similarity.  Returns a 1-D array (not an N×N matrix) because only the
     per-row maximum is needed downstream.
 
+    The norm and dot product are always computed over the same aligned slice
+    so that edge frames (where one window is shorter) are compared fairly.
+
     Complexity: O(N_a × N_b × w) — compiled by numba.
 
     Args:
@@ -115,35 +119,34 @@ def frame_wise_similarity(
     best_sim = np.zeros(n_a, dtype=np.float32)
 
     for i in range(n_a):
-        # build context window for frame i
         sa = max(0, i - window_size)
         ea = min(n_a, i + window_size + 1)
-        wa = energy_a[sa:ea]
-
-        norm_a = 0.0
-        for v in wa:
-            norm_a += v * v
-        norm_a = norm_a**0.5
-        if norm_a < 1e-8:
-            continue
+        # half-widths actually available on each side for frame i
+        left_i = i - sa
+        right_i = ea - i - 1
 
         best = -1.0
         for j in range(n_b):
-            sb = max(0, j - window_size)
-            eb = min(n_b, j + window_size + 1)
-            wb = energy_b[sb:eb]
+            # Align the context window around j to the same shape as around i
+            sa_j = max(0, j - left_i)
+            ea_j = min(n_b, j + right_i + 1)
+            # Further clip so both windows are the same length
+            l = min(ea - sa, ea_j - sa_j)
+            wa = energy_a[sa : sa + l]
+            wb = energy_b[sa_j : sa_j + l]
 
+            norm_a = 0.0
             norm_b = 0.0
-            for v in wb:
-                norm_b += v * v
-            norm_b = norm_b**0.5
-            if norm_b < 1e-8:
-                continue
-
-            min_len = min(len(wa), len(wb))
             dot = 0.0
-            for k in range(min_len):
+            for k in range(l):
+                norm_a += wa[k] * wa[k]
+                norm_b += wb[k] * wb[k]
                 dot += wa[k] * wb[k]
+
+            norm_a = norm_a**0.5
+            norm_b = norm_b**0.5
+            if norm_a < 1e-8 or norm_b < 1e-8:
+                continue
 
             sim = dot / (norm_a * norm_b)
             if sim > best:
@@ -160,7 +163,11 @@ def detect_pattern_matches(
     threshold: float = 0.6,
     min_segment_length: int = 5,
 ) -> list[dict]:
-    """detect contiguous regions above `threshold` in a 1-D similarity array."""
+    """Detect contiguous regions above `threshold` in a 1-D similarity array.
+
+    start_frame and end_frame are 0-indexed into `similarities`;
+    end_frame is exclusive (half-open interval [start, end)).
+    """
     if similarities.size == 0:
         return []
 
@@ -171,8 +178,10 @@ def detect_pattern_matches(
     segments = []
     in_seg = False
     start = 0
+    n = len(above)
 
-    for i, hit in enumerate(np.concatenate(([False], above, [False]))):
+    for i in range(n + 1):
+        hit = above[i] if i < n else False
         if hit and not in_seg:
             start = i
             in_seg = True
@@ -197,6 +206,11 @@ def match_bass_patterns(
     S_bass_b: np.ndarray,
     use_dtw: bool = True,
     dtw_radius: int = 1,
+    # Deprecated — kept for one release so existing callers don't break.
+    # sr and hop_length are no longer used internally; pass them and a
+    # DeprecationWarning is raised but the call succeeds.
+    sr: int | None = None,
+    hop_length: int | None = None,
 ) -> PatternMatch:
     """Compare bass patterns between two spectrograms.
 
@@ -205,11 +219,21 @@ def match_bass_patterns(
         use_dtw:            Use fast_dtw for overall alignment score;
                             otherwise use cross-correlation peak.
         dtw_radius:         FastDTW search radius forwarded to fast_dtw.
+        sr:                 Deprecated. No longer used. Will be removed.
+        hop_length:         Deprecated. No longer used. Will be removed.
 
     Returns:
         PatternMatch with scores, matched segments, correlation, and
         per-frame similarity.
     """
+    if sr is not None or hop_length is not None:
+        warnings.warn(
+            "The 'sr' and 'hop_length' arguments to match_bass_patterns() are "
+            "deprecated and will be removed in the next release. "
+            "They are no longer used internally.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     energy_a = compute_bass_spectrogram_features(S_bass_a)
     energy_b = compute_bass_spectrogram_features(S_bass_b)
 
@@ -226,7 +250,10 @@ def match_bass_patterns(
 
     if use_dtw:
         dist, _ = dtw_distance(energy_a, energy_b, window=dtw_radius)
-        overall_sim = max(0.0, 1.0 - dist)
+        # 1/(1+dist) maps [0, ∞) → (0, 1] monotonically.
+        # max(0, 1-dist) would collapse to 0 for any dist > 1, which is
+        # common since FastDTW returns unnormalised log-energy distances.
+        overall_sim = 1.0 / (1.0 + dist) if not np.isinf(dist) else 0.0
     else:
         correlation, lags = cross_correlate_patterns(energy_a, energy_b)
         overall_sim = float(np.max(correlation)) if correlation.size > 0 else 0.0
