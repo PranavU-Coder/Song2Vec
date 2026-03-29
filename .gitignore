@@ -25,3 +25,6 @@ outputs/
 .ruff_cache
 .python-version
 .pytest_cache
+
+# benchmark artifacts
+*.lprof

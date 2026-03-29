@@ -21,7 +21,7 @@ Notes / references (high-level):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import librosa
 import numpy as np

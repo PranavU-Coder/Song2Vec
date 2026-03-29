@@ -229,8 +229,6 @@ def register_routes(app) -> None:
                 pattern_match = match_bass_patterns(
                     S_bass_a=result_a["S_bass"],
                     S_bass_b=result_b["S_bass"],
-                    sr=result_a["sr"],
-                    hop_length=result_a["hop_length"],
                     use_dtw=True,
                 )
             except Exception as e:
