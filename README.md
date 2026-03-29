@@ -64,10 +64,10 @@ The system compares sequences over time using three approaches:
 
 ## Installation
 
-Create an environment and install dependencies:
+Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 **Notes:**
@@ -297,4 +297,22 @@ Song2Vec/
 
 ## License
 
-MIT.
+[MIT](https://github.com/pranshu05/Song2Vec?tab=MIT-1-ov-file)
+
+## Contributors
+
+<a href="https://star-history.com/#https://github.com/pranshu05/Song2Vec&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=pranshu05/Song2Vec&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=pranshu05/Song2Vec&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=pranshu05/Song2Vec&type=Date" />
+ </picture>
+</a>
+
+Contributors:
+
+<a href="https://github.com/pranshu05/Song2Vec/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=pranshu05/Song2Vec" />
+</a>
+
+Made with [contrib.rocks](https://contrib.rocks).

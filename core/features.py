@@ -21,7 +21,7 @@ Notes / references (high-level):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import librosa
 import numpy as np
@@ -81,10 +81,14 @@ def compute_stft_magnitude(
     """
 
     y = np.asarray(y, dtype=np.float32)
-    D = librosa.stft(y=y, n_fft=n_fft, hop_length=hop_length, window=window, center=center)
+    D = librosa.stft(
+        y=y, n_fft=n_fft, hop_length=hop_length, window=window, center=center
+    )
     S_mag = np.abs(D).astype(np.float32)
     freqs_hz = librosa.fft_frequencies(sr=sr, n_fft=n_fft).astype(np.float32)
-    times_s = librosa.frames_to_time(np.arange(S_mag.shape[1]), sr=sr, hop_length=hop_length)
+    times_s = librosa.frames_to_time(
+        np.arange(S_mag.shape[1]), sr=sr, hop_length=hop_length
+    )
     return S_mag, freqs_hz, times_s.astype(np.float32)
 
 
@@ -194,12 +198,23 @@ def bass_feature_vector(
         dlog_abs_mean = 0.0
         dlog_std = 0.0
 
-    feats: List[float] = [mean, std, p10, p50, p90, centroid_norm, dlog_abs_mean, dlog_std]
+    feats: List[float] = [
+        mean,
+        std,
+        p10,
+        p50,
+        p90,
+        centroid_norm,
+        dlog_abs_mean,
+        dlog_std,
+    ]
 
     # Sub-band features (mean/std per sub-band).
     subband_debug: List[np.ndarray] = []
-    for (fmin, fmax) in config.bass_subbands_hz:
-        S_sb, sb_freqs = isolate_frequency_band(S_mag=S_mag, freqs_hz=freqs_hz, fmin=fmin, fmax=fmax)
+    for fmin, fmax in config.bass_subbands_hz:
+        S_sb, sb_freqs = isolate_frequency_band(
+            S_mag=S_mag, freqs_hz=freqs_hz, fmin=fmin, fmax=fmax
+        )
         e_sb = bass_energy(S_sb)
         log_e_sb = np.log(e_sb).astype(np.float32)
         feats.append(float(np.mean(log_e_sb)) if log_e_sb.size else 0.0)
@@ -216,7 +231,7 @@ def bass_feature_vector(
         "bass_freqs_hz": bass_freqs,
         "bass_energy_t": e_t,
         "bass_log_energy_t": log_e,
-    "bass_subband_log_energy_t": np.asarray(subband_debug, dtype=object),
+        "bass_subband_log_energy_t": np.asarray(subband_debug, dtype=object),
     }
 
     return feat, debug
