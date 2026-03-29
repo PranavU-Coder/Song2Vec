@@ -21,7 +21,9 @@ class StructuralSegment:
 
     start_frame: int
     end_frame: int
-    mean_energy: float
+    mean_ssm_similarity: (
+        float  # average internal SSM similarity of this segment, in [0, 1]
+    )
     label: str = ""
 
 
@@ -355,7 +357,7 @@ def detect_structural_segments(
         e = int(boundaries[-1]) if len(boundaries) > 1 else n
         return [
             StructuralSegment(
-                start_frame=s, end_frame=e, mean_energy=float(np.mean(ssm))
+                start_frame=s, end_frame=e, mean_ssm_similarity=float(np.mean(ssm))
             )
         ]
 
@@ -389,7 +391,7 @@ def detect_structural_segments(
         StructuralSegment(
             start_frame=int(boundaries[s]),
             end_frame=int(boundaries[min(e, len(boundaries) - 1)]),
-            mean_energy=float(np.mean(ssm[s:e, s:e])),
+            mean_ssm_similarity=float(np.mean(ssm[s:e, s:e])),
             label=labels[idx],
         )
         for idx, (s, e) in enumerate(zip(struct_bounds[:-1], struct_bounds[1:]))
@@ -407,7 +409,10 @@ def match_structural_sections(
 
     def _profile(ssm: np.ndarray, seg: StructuralSegment) -> np.ndarray:
         i0 = min(seg.start_frame // section_frames, ssm.shape[0] - 1)
-        i1 = min(max(i0 + 1, seg.end_frame // section_frames), ssm.shape[0])
+        # ceil division: end_frame is exclusive, so a segment ending at frame 17
+        # with section_frames=16 should include SSM row 1, not just row 0.
+        i1 = min(int(np.ceil(seg.end_frame / section_frames)), ssm.shape[0])
+        i1 = max(i0 + 1, i1)  # always include at least one row
         return np.mean(ssm[i0:i1, :], axis=0).astype(np.float32)
 
     def _cos(pa: np.ndarray, pb: np.ndarray) -> float:
