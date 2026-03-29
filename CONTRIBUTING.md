@@ -24,13 +24,6 @@ Before opening a PR:
  uv run ruff format .
 ```
 
-## Project conventions
-
-- Feature extraction code lives in `features/`
-- Similarity metrics live in `similarity/`
-- Training scripts live in `train/`
-- Avoid committing audio files; store them in `data/` (gitignored)
-
 ## Reporting issues
 
 When reporting an issue, include:
