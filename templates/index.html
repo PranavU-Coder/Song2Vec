@@ -378,11 +378,8 @@
                 if (data.similarity.matched_segments.length > 0) {
                     let html = '<div class="mt-4"><p class="text-xs font-semibold text-gray-900 mb-2">Matched Bass Patterns</p>';
                     data.similarity.matched_segments.forEach(seg => {
-                        // Calculate frame count to get accurate time
-                        const totalFrames = data.similarity.frame_similarity.length;
-                        const frameRate = totalFrames / maxDuration;
-                        const startTime = (seg.start_frame / frameRate).toFixed(1);
-                        const endTime = (seg.end_frame / frameRate).toFixed(1);
+                        const startTime = Number(seg.start_time_s ?? 0).toFixed(1);
+                        const endTime = Number(seg.end_time_s ?? 0).toFixed(1);
 
                         html += `<div class="p-3 border-l-2 border-gray-900 bg-gray-50 rounded mb-2">
                             <p class="text-xs font-medium text-gray-900">${startTime}s – ${endTime}s</p>
@@ -475,19 +472,8 @@
                 const frameSimilarity = data.similarity.frame_similarity;
                 const timeAxis = Array.from(
                     { length: frameSimilarity.length },
-                    (_, i) => (i / frameSimilarity.length) * maxDuration
+                    (_, i) => (i / Math.max(frameSimilarity.length - 1, 1)) * data.song_a.duration_seconds
                 );
-
-                const matchedTrace = {
-                    x: timeAxis,
-                    y: Array(timeAxis.length).fill(1),
-                    fill: 'tozeroy',
-                    fillcolor: 'rgba(0, 0, 0, 0.08)',
-                    line: { color: 'rgba(0, 0, 0, 0)' },
-                    name: 'Matched regions',
-                    hoverinfo: 'skip',
-                    showlegend: false
-                };
 
                 const frameSim = {
                     x: timeAxis,
@@ -501,10 +487,28 @@
                         shape: 'linear'
                     },
                     fillcolor: 'rgba(100, 100, 100, 0.2)',
-                    name: 'Similarity'
+                    name: 'Similarity',
+                    hovertemplate: 't=%{x:.2f}s<br>sim=%{y:.3f}<extra></extra>'
                 };
 
-                Plotly.newPlot('chart3', [matchedTrace, frameSim], {
+                const matchedShapes = (data.similarity.matched_segments || []).map(seg => {
+                    const x0 = Number(seg.start_time_s ?? 0);
+                    const x1 = Number(seg.end_time_s ?? 0);
+                    return {
+                        type: 'rect',
+                        xref: 'x',
+                        yref: 'paper',
+                        x0,
+                        x1,
+                        y0: 0,
+                        y1: 1,
+                        fillcolor: 'rgba(0, 0, 0, 0.08)',
+                        line: { width: 0 },
+                        layer: 'below'
+                    };
+                });
+
+                Plotly.newPlot('chart3', [frameSim], {
                     xaxis: {
                         title: 'Time (s)',
                         showgrid: false,
@@ -521,6 +525,7 @@
                     margin: { l: 45, r: 40, b: 40, t: 5 },
                     plot_bgcolor: '#fff',
                     paper_bgcolor: '#fff',
+                    shapes: matchedShapes,
                     font: { family: 'sans-serif', color: '#000', size: 10 },
                     hovermode: 'x unified',
                     legend: { x: 0.01, y: 0.99, font: { size: 9 } }

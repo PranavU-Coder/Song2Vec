@@ -93,23 +93,27 @@ def dtw_distance(
 
 @njit(cache=True)
 def frame_wise_similarity(
-    energy_a: np.ndarray, energy_b: np.ndarray, window_size: int = 3
+    energy_a: np.ndarray,
+    energy_b: np.ndarray,
+    window_size: int = 3,
+    search_radius: int = 8,
 ) -> np.ndarray:
-    """Per-frame best cosine similarity via sliding-window context vectors.
+    """Per-frame cosine similarity using local tempo-aligned search.
 
-    For each frame i in energy_a, finds the most similar frame j in energy_b
-    by comparing their ±window_size context neighbourhoods with cosine
-    similarity.  Returns a 1-D array (not an N×N matrix) because only the
-    per-row maximum is needed downstream.
+    For each frame i in energy_a, this maps to a tempo-aligned center frame in
+    energy_b and searches only in a local +/-search_radius neighborhood.
+    This avoids inflated scores caused by matching each frame against any
+    arbitrary point in the other song.
 
     The norm and dot product are always computed over the same aligned slice
     so that edge frames (where one window is shorter) are compared fairly.
 
-    Complexity: O(N_a × N_b × w) — compiled by numba.
+    Complexity: O(N_a x search_radius x w) -- compiled by numba.
 
     Args:
         energy_a, energy_b: 1-D log-energy envelopes, float32.
         window_size:         Half-width of the context window.
+        search_radius:       Half-width of search around aligned center in B.
 
     Returns:
         best_sim: shape (len(energy_a),), float32.
@@ -118,6 +122,9 @@ def frame_wise_similarity(
     n_b = len(energy_b)
     best_sim = np.zeros(n_a, dtype=np.float32)
 
+    denom_a = n_a - 1 if n_a > 1 else 1
+    denom_b = n_b - 1 if n_b > 1 else 1
+
     for i in range(n_a):
         sa = max(0, i - window_size)
         ea = min(n_a, i + window_size + 1)
@@ -125,8 +132,12 @@ def frame_wise_similarity(
         left_i = i - sa
         right_i = ea - i - 1
 
+        j_center = int(round(i * denom_b / denom_a))
+        j_start = max(0, j_center - search_radius)
+        j_end = min(n_b - 1, j_center + search_radius)
+
         best = -1.0
-        for j in range(n_b):
+        for j in range(j_start, j_end + 1):
             # Align the context window around j to the same shape as around i
             sa_j = max(0, j - left_i)
             ea_j = min(n_b, j + right_i + 1)
@@ -135,19 +146,32 @@ def frame_wise_similarity(
             wa = energy_a[sa : sa + l]
             wb = energy_b[sa_j : sa_j + l]
 
+            # Mean-center windows before similarity to avoid near-1 saturation
+            # on strictly positive energy envelopes.
+            mean_a = 0.0
+            mean_b = 0.0
+            for k in range(l):
+                mean_a += wa[k]
+                mean_b += wb[k]
+            mean_a /= l
+            mean_b /= l
+
             norm_a = 0.0
             norm_b = 0.0
             dot = 0.0
             for k in range(l):
-                norm_a += wa[k] * wa[k]
-                norm_b += wb[k] * wb[k]
-                dot += wa[k] * wb[k]
+                da = wa[k] - mean_a
+                db = wb[k] - mean_b
+                norm_a += da * da
+                norm_b += db * db
+                dot += da * db
 
             norm_a = norm_a**0.5
             norm_b = norm_b**0.5
             if norm_a < 1e-8 or norm_b < 1e-8:
                 continue
 
+            # Correlation-like similarity in [-1, 1].
             sim = dot / (norm_a * norm_b)
             if sim > best:
                 best = sim
@@ -246,23 +270,56 @@ def match_bass_patterns(
             frame_similarity=np.array([], dtype=np.float32),
         )
 
-    frame_sim = frame_wise_similarity(energy_a, energy_b, window_size=3)
+    search_radius = max(6, int(0.03 * max(len(energy_a), len(energy_b))))
+    frame_sim = frame_wise_similarity(
+        energy_a,
+        energy_b,
+        window_size=3,
+        search_radius=search_radius,
+    )
+    frame_sim_mean = float(np.mean(frame_sim)) if frame_sim.size > 0 else 0.0
+
+    correlation, lags = cross_correlate_patterns(energy_a, energy_b)
+    corr_peak = float(np.max(correlation)) if correlation.size > 0 else 0.0
+    # Map cross-correlation from [-1, 1] to [0, 1] for score blending.
+    corr_component = float(np.clip((corr_peak + 1.0) / 2.0, 0.0, 1.0))
 
     if use_dtw:
         dist, _ = dtw_distance(energy_a, energy_b, window=dtw_radius)
-        # 1/(1+dist) maps [0, ∞) → (0, 1] monotonically.
-        # max(0, 1-dist) would collapse to 0 for any dist > 1, which is
-        # common since FastDTW returns unnormalised log-energy distances.
-        overall_sim = 1.0 / (1.0 + dist) if not np.isinf(dist) else 0.0
+        dtw_component = 1.0 / (1.0 + dist) if not np.isinf(dist) else 0.0
+        # Blend global alignment (DTW) with local frame quality and
+        # correlation peak to reduce over-penalization of tempo/structure drift.
+        overall_sim = (
+            0.6 * dtw_component + 0.3 * frame_sim_mean + 0.1 * corr_component
+        )
     else:
-        correlation, lags = cross_correlate_patterns(energy_a, energy_b)
-        overall_sim = float(np.max(correlation)) if correlation.size > 0 else 0.0
+        overall_sim = 0.7 * corr_component + 0.3 * frame_sim_mean
 
-    matched = detect_pattern_matches(frame_sim, threshold=0.5, min_segment_length=3)
-    correlation, lags = cross_correlate_patterns(energy_a, energy_b)
+    adaptive_threshold = (
+        float(np.clip(np.percentile(frame_sim, 70), 0.45, 0.85))
+        if frame_sim.size > 0
+        else 0.5
+    )
+    matched = detect_pattern_matches(
+        frame_sim,
+        threshold=adaptive_threshold,
+        min_segment_length=3,
+    )
+
+    # Safety guard: reject trivial "entire-song" matches when the global
+    # alignment evidence is not correspondingly strong.
+    if matched and frame_sim.size > 0:
+        full_cover = [
+            seg
+            for seg in matched
+            if seg["length_frames"] >= int(0.95 * frame_sim.size)
+            and seg["mean_similarity"] >= 0.98
+        ]
+        if full_cover and (overall_sim < 0.98 or corr_component < 0.98):
+            matched = [seg for seg in matched if seg not in full_cover]
 
     return PatternMatch(
-        overall_similarity=float(overall_sim),
+        overall_similarity=float(np.clip(overall_sim, 0.0, 1.0)),
         matched_segments=matched,
         correlation=correlation,
         lags=lags,

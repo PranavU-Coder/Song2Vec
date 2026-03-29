@@ -2,7 +2,7 @@
 
 ![graphs](/data/images/Song2Vec.png)
 
->> Join the Discord Server for discussion: https://discord.gg/AqMSZ3b3xM
+> Join the Discord Server for discussion: https://discord.gg/AqMSZ3b3xM
 
 **Bass pattern recognition and similarity detection** 
 
@@ -110,7 +110,7 @@ S_bass_a, bass_freqs = isolate_frequency_band(S_mag_a, freqs, 20, 250)
 S_bass_b, _ = isolate_frequency_band(S_mag_b, freqs, 20, 250)
 
 # Match patterns
-result = match_bass_patterns(S_bass_a, S_bass_b, sr=22050, hop_length=512)
+result = match_bass_patterns(S_bass_a, S_bass_b)
 
 # Results
 print(f"Similarity: {result.overall_similarity:.2%}")
@@ -124,15 +124,19 @@ print(f"Frame scores: {result.frame_similarity}")
 Song2Vec/
 ├── app.py                ← Flask web app entry point
 ├── run.sh                ← Start web server
-├── requirements.txt      ← Python dependencies
+├── uv.lock
 ├── README.md
+|
+├── benchmarks/
+|   ├── profiler.py        
 │
 ├── core/                 ← All audio processing logic
-│   ├── __init__.py       (Public API exports)
-│   ├── audio.py          (Load, normalize, resample)
-│   ├── features.py       (STFT, bass extraction)
+│   ├── __init__.py         (Public API exports)
+│   ├── audio.py            (Load, normalize, resample)
+│   ├── dtw.py              (Dynamic Time Warping implementation)  
+│   ├── features.py         (STFT, bass extraction)
 │   ├── pattern_matching.py (DTW, correlation, matching)
-│   └── similarity.py     (Cosine, euclidean metrics)
+│   └── similarity.py       (Cosine, euclidean metrics)
 │
 ├── web/                  ← Flask-specific code
 │   ├── __init__.py
@@ -159,6 +163,11 @@ Song2Vec/
 - `isolate_frequency_band()` — Extract frequency range
 - `bass_energy()` — Per-frame energy calculation
 
+**`core/dtw.py`** — Structural DTW and section-level comparison
+- `fast_dtw()` — Fast approximate DTW in linear time/space
+- `compare_song_structures()` — Structural similarity using self-similarity matrices
+- `batch_compare_structures()` — Candidate ranking with LB-Keogh pruning
+
 **`core/pattern_matching.py`** — Temporal pattern matching (core)
 - `dtw_distance()` — Dynamic Time Warping alignment
 - `cross_correlate_patterns()` — Pattern shift detection
@@ -172,6 +181,20 @@ Song2Vec/
 
 **`web/api.py`** — REST API endpoints
 - `/api/compare` — File upload and comparison
+
+## API Response Notes
+
+The `/api/compare` response includes:
+
+- `similarity.overall_similarity`: final score in `[0, 1]`
+- `similarity.frame_similarity`: per-frame alignment similarity in Song 1 timeline
+- `similarity.matched_segments`: contiguous high-similarity regions with:
+  - `start_frame`, `end_frame`, `length_frames`, `mean_similarity`
+  - `start_time_s`, `end_time_s` (already converted on backend)
+
+Important:
+- `start_frame` / `end_frame` are indexed on Song 1's frame axis.
+- UI timing should use `start_time_s` and `end_time_s` instead of re-deriving time from downsampled arrays.
 
 ## Understanding Results
 
@@ -203,6 +226,27 @@ Song2Vec/
 - Shows WHERE patterns match (temporal localization)
 - More informative than a single number
 - Helps identify specific matching sections
+
+**How do we prevent false "100% full-song" matches?**
+- Frame matching is constrained to tempo-aligned local neighborhoods (not global any-to-any frame search).
+- Local windows use mean-centered correlation to compare shape changes and avoid saturation on positive-only envelopes.
+- Segment post-filtering suppresses suspicious near-perfect full-song segments when global evidence does not support them.
+
+## Troubleshooting
+
+If results look suspicious:
+
+- `matched_segments = 0` but high similarity curve:
+  - Hard refresh browser (to avoid stale cached JS), then rerun.
+  - Verify backend is restarted after code changes (`bash run.sh`).
+
+- similarity appears near `1.0` everywhere:
+  - Use songs with clearly different rhythm structures to sanity check.
+  - Confirm you're on the latest code where frame similarity uses mean-centered windows.
+
+- processing is too slow:
+  - Reduce audio duration (e.g. first 30-60 seconds).
+  - Lower FFT size to `n_fft=2048` for faster inference.
 
 
 ## Performance Tips

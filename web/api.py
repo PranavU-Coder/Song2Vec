@@ -14,7 +14,6 @@ from werkzeug.utils import secure_filename
 
 from core import (
     BassFeatureConfig,
-    bass_feature_vector,
     compute_stft_magnitude,
     isolate_frequency_band,
     load_audio,
@@ -65,7 +64,7 @@ def downsample_spectrogram(S: np.ndarray, target_frames: int = 500) -> np.ndarra
 
 
 def downsample_array(arr: np.ndarray, target_size: int = 500) -> np.ndarray:
-    """Downsample 1D array using max pooling."""
+    """Downsample a 1D array by stride sampling."""
     if len(arr) <= target_size:
         return arr
 
@@ -74,7 +73,7 @@ def downsample_array(arr: np.ndarray, target_size: int = 500) -> np.ndarray:
 
 
 def process_song(
-    filepath: str, sr: int = 22050, duration: int = None
+    filepath: str, sr: int = 22050, duration: float | None = None
 ) -> dict[str, Any] | None:
     """Load audio and extract bass features and spectrogram."""
     try:
@@ -119,19 +118,13 @@ def process_song(
             fmax=config.bass_max_hz,
         )
 
-        # Get feature vector
-        feat_vec, _ = bass_feature_vector(y=y, sr=audio.sr, config=config)
-
         return {
             "success": True,
             "filename": Path(filepath).name,
             "duration_seconds": float(len(y) / audio.sr),
-            "S_mag": S_mag,
-            "freqs_hz": freqs_hz,
             "times_s": times_s,
             "S_bass": S_bass,
             "bass_freqs": bass_freqs,
-            "feature_vector": feat_vec,
             "sr": audio.sr,
             "hop_length": config.hop_length,
         }
@@ -247,11 +240,20 @@ def register_routes(app) -> None:
                 pattern_match.frame_similarity, target_size=500
             )
 
+            frame_duration_s = result_a["hop_length"] / result_a["sr"]
+            matched_segments_seconds = [
+                {
+                    **seg,
+                    "start_time_s": float(seg["start_frame"] * frame_duration_s),
+                    "end_time_s": float(seg["end_frame"] * frame_duration_s),
+                }
+                for seg in pattern_match.matched_segments
+            ]
+
             response = {
                 "song_a": {
                     "filename": result_a["filename"],
                     "duration_seconds": result_a["duration_seconds"],
-                    "freqs_hz": serialize_numpy(result_a["bass_freqs"]),
                     "times_s": serialize_numpy(times_a_ds),
                     "S_bass_db": serialize_numpy(
                         20 * np.log10(np.maximum(S_bass_a_ds, 1e-10))
@@ -261,7 +263,6 @@ def register_routes(app) -> None:
                 "song_b": {
                     "filename": result_b["filename"],
                     "duration_seconds": result_b["duration_seconds"],
-                    "freqs_hz": serialize_numpy(result_b["bass_freqs"]),
                     "times_s": serialize_numpy(times_b_ds),
                     "S_bass_db": serialize_numpy(
                         20 * np.log10(np.maximum(S_bass_b_ds, 1e-10))
@@ -270,7 +271,7 @@ def register_routes(app) -> None:
                 },
                 "similarity": {
                     "overall_similarity": pattern_match.overall_similarity,
-                    "matched_segments": pattern_match.matched_segments,
+                    "matched_segments": matched_segments_seconds,
                     "frame_similarity": serialize_numpy(frame_sim_ds),
                 },
             }
