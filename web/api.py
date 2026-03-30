@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {"mp3", "wav", "flac", "ogg", "m4a"}
-MAX_FILE_SIZE_MB = 100  # Maximum file size in MB
+MAX_FILE_SIZE_MB = 100
 
 
 def allowed_file(filename: str) -> bool:
@@ -44,30 +44,10 @@ def serialize_numpy(obj: Any) -> Any:
     return obj
 
 
-def downsample_spectrogram(S: np.ndarray, target_frames: int = 500) -> np.ndarray:
-    """Downsample spectrogram to reduce data size for visualization.
-
-    Args:
-        S: Spectrogram of shape (n_freq, n_frames)
-        target_frames: Target number of frames (default 500 for performance)
-
-    Returns:
-        Downsampled spectrogram
-    """
-    n_freq, n_frames = S.shape
-    if n_frames <= target_frames:
-        return S
-
-    # Calculate step size to achieve target frame count
-    step = int(np.ceil(n_frames / target_frames))
-    return S[:, ::step]
-
-
 def downsample_array(arr: np.ndarray, target_size: int = 500) -> np.ndarray:
     """Downsample a 1D array by stride sampling."""
     if len(arr) <= target_size:
         return arr
-
     step = int(np.ceil(len(arr) / target_size))
     return arr[::step]
 
@@ -77,11 +57,9 @@ def process_song(
 ) -> dict[str, Any] | None:
     """Load audio and extract bass features and spectrogram."""
     try:
-        # Validate file exists and is readable
         if not os.path.exists(filepath) or not os.path.isfile(filepath):
             return {"success": False, "error": "Audio file not found"}
 
-        # Check file size
         file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
         if file_size_mb > MAX_FILE_SIZE_MB:
             return {
@@ -98,7 +76,6 @@ def process_song(
         config = BassFeatureConfig()
 
         logger.info("Computing spectrogram...")
-        # Get the full spectrogram and metadata for visualization
         S_mag, freqs_hz, times_s = compute_stft_magnitude(
             y=y,
             sr=audio.sr,
@@ -110,7 +87,6 @@ def process_song(
 
         logger.info(f"Spectrogram shape: {S_mag.shape}")
 
-        # Isolate bass band
         S_bass, bass_freqs = isolate_frequency_band(
             S_mag=S_mag,
             freqs_hz=freqs_hz,
@@ -146,7 +122,6 @@ def register_routes(app) -> None:
         path_b = None
 
         try:
-            # Check for file uploads
             if "song_a" not in request.files or "song_b" not in request.files:
                 return jsonify({"error": "Missing song files"}), 400
 
@@ -171,7 +146,6 @@ def register_routes(app) -> None:
                     400,
                 )
 
-            # Check file sizes before processing
             file_a.seek(0, os.SEEK_END)
             file_b.seek(0, os.SEEK_END)
             size_a_mb = file_a.tell() / (1024 * 1024)
@@ -184,7 +158,6 @@ def register_routes(app) -> None:
                     {"error": f"Files too large (max {MAX_FILE_SIZE_MB}MB)"}
                 ), 400
 
-            # Save temporarily with unique names
             filename_a = secure_filename(file_a.filename)
             filename_b = secure_filename(file_b.filename)
             unique_a = str(uuid.uuid4())[:8]
@@ -197,11 +170,10 @@ def register_routes(app) -> None:
                 tempfile.gettempdir(), f"song2vec_{unique_b}_{filename_b}"
             )
 
-            logger.info(f"Saving uploaded files to temp...")
+            logger.info("Saving uploaded files to temp...")
             file_a.save(path_a)
             file_b.save(path_b)
 
-            # Process both songs
             logger.info("Processing song A...")
             result_a = process_song(path_a, sr=22050)
             if not result_a["success"]:
@@ -216,7 +188,6 @@ def register_routes(app) -> None:
                     {"error": f"Failed to process Song 2: {result_b['error']}"}
                 ), 400
 
-            # Match bass patterns
             logger.info("Matching bass patterns...")
             try:
                 pattern_match = match_bass_patterns(
@@ -228,24 +199,39 @@ def register_routes(app) -> None:
                 logger.error(f"Pattern matching failed: {str(e)}")
                 return jsonify({"error": f"Failed to match patterns: {str(e)}"}), 500
 
-            # Prepare response with visualization data
             logger.info("Preparing response...")
 
-            # Downsample spectrograms for browser performance
-            S_bass_a_ds = downsample_spectrogram(result_a["S_bass"], target_frames=500)
-            S_bass_b_ds = downsample_spectrogram(result_b["S_bass"], target_frames=500)
-            times_a_ds = downsample_array(result_a["times_s"], target_size=500)
-            times_b_ds = downsample_array(result_b["times_s"], target_size=500)
+            # Bass energy in dB for readable line plots
+            energy_a = np.sum(result_a["S_bass"] ** 2, axis=0)
+            energy_a_db = 10 * np.log10(np.maximum(energy_a, 1e-10))
+            energy_b = np.sum(result_b["S_bass"] ** 2, axis=0)
+            energy_b_db = 10 * np.log10(np.maximum(energy_b, 1e-10))
+
+            target_frames = 500
+            times_a_ds = downsample_array(
+                result_a["times_s"], target_size=target_frames
+            )
+            times_b_ds = downsample_array(
+                result_b["times_s"], target_size=target_frames
+            )
+            energy_a_ds = downsample_array(energy_a_db, target_size=target_frames)
+            energy_b_ds = downsample_array(energy_b_db, target_size=target_frames)
             frame_sim_ds = downsample_array(
-                pattern_match.frame_similarity, target_size=500
+                pattern_match.frame_similarity, target_size=target_frames
             )
 
-            frame_duration_s = result_a["hop_length"] / result_a["sr"]
-            matched_segments_seconds = [
+            frame_duration_a = result_a["hop_length"] / result_a["sr"]
+            frame_duration_b = result_b["hop_length"] / result_b["sr"]
+
+            matched_segments = [
                 {
                     **seg,
-                    "start_time_s": float(seg["start_frame"] * frame_duration_s),
-                    "end_time_s": float(seg["end_frame"] * frame_duration_s),
+                    "start_time_a": float(seg["start_frame"] * frame_duration_a),
+                    "end_time_a": float(seg["end_frame"] * frame_duration_a),
+                    "start_time_b": float(
+                        seg.get("start_frame_b", 0) * frame_duration_b
+                    ),
+                    "end_time_b": float(seg.get("end_frame_b", 0) * frame_duration_b),
                 }
                 for seg in pattern_match.matched_segments
             ]
@@ -255,24 +241,19 @@ def register_routes(app) -> None:
                     "filename": result_a["filename"],
                     "duration_seconds": result_a["duration_seconds"],
                     "times_s": serialize_numpy(times_a_ds),
-                    "S_bass_db": serialize_numpy(
-                        20 * np.log10(np.maximum(S_bass_a_ds, 1e-10))
-                    ),
-                    "bass_freqs": serialize_numpy(result_a["bass_freqs"]),
+                    "bass_energy_db": serialize_numpy(energy_a_ds),
                 },
                 "song_b": {
                     "filename": result_b["filename"],
                     "duration_seconds": result_b["duration_seconds"],
                     "times_s": serialize_numpy(times_b_ds),
-                    "S_bass_db": serialize_numpy(
-                        20 * np.log10(np.maximum(S_bass_b_ds, 1e-10))
-                    ),
-                    "bass_freqs": serialize_numpy(result_b["bass_freqs"]),
+                    "bass_energy_db": serialize_numpy(energy_b_ds),
                 },
                 "similarity": {
                     "overall_similarity": pattern_match.overall_similarity,
-                    "matched_segments": matched_segments_seconds,
+                    "matched_segments": matched_segments,
                     "frame_similarity": serialize_numpy(frame_sim_ds),
+                    "threshold": pattern_match.threshold,
                 },
             }
 
@@ -286,7 +267,6 @@ def register_routes(app) -> None:
             logger.error(f"Unexpected error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)[:100]}"}), 500
         finally:
-            # Cleanup temporary files
             try:
                 if path_a and os.path.exists(path_a):
                     os.remove(path_a)
@@ -301,5 +281,4 @@ def register_routes(app) -> None:
             except Exception as e:
                 logger.warning(f"Failed to clean up temp file B: {e}")
 
-            # Force garbage collection
             gc.collect()

@@ -8,6 +8,7 @@ from .features import (
 from .pattern_matching import (
     PatternMatch,
     compute_bass_spectrogram_features,
+    compute_onset_envelope,
     cross_correlate_patterns,
     detect_pattern_matches,
     dtw_distance,
@@ -39,6 +40,7 @@ __all__ = [
     # Pattern matching
     "PatternMatch",
     "compute_bass_spectrogram_features",
+    "compute_onset_envelope",
     "cross_correlate_patterns",
     "detect_pattern_matches",
     "dtw_distance",

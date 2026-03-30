@@ -2,15 +2,16 @@
 
 Methods:
     1. Extract bass spectrogram (20-250 Hz over time)
-    2. Compute cross-correlation to find aligned segments
-    3. Calculate frame-by-frame similarity scores
-    4. Return matched regions and overall similarity
+    2. Compute per-frame energy envelope and onset strength
+    3. Calculate frame-by-frame similarity on both energy and rhythm
+    4. Use DTW on z-normalized envelopes to avoid loudness bias
+    5. Return matched regions with mapping to both songs' timelines
 """
 
 from __future__ import annotations
 
 import warnings
-from typing import NamedTuple
+from dataclasses import dataclass, field
 
 import numpy as np
 from numba import njit
@@ -19,7 +20,8 @@ from scipy import signal
 from .dtw import fast_dtw
 
 
-class PatternMatch(NamedTuple):
+@dataclass
+class PatternMatch:
     """Result of pattern matching between two bass sequences."""
 
     overall_similarity: float
@@ -27,6 +29,11 @@ class PatternMatch(NamedTuple):
     correlation: np.ndarray
     lags: np.ndarray
     frame_similarity: np.ndarray
+    energy_a: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.float32))
+    energy_b: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.float32))
+    onset_a: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.float32))
+    onset_b: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.float32))
+    threshold: float = 0.5
 
 
 def compute_bass_spectrogram_features(S_bass: np.ndarray) -> np.ndarray:
@@ -42,6 +49,22 @@ def compute_bass_spectrogram_features(S_bass: np.ndarray) -> np.ndarray:
         return np.array([], dtype=np.float32)
     energy = np.sum(S_bass**2, axis=0)
     return np.log(np.maximum(energy, 1e-10)).astype(np.float32)
+
+
+def compute_onset_envelope(S_bass: np.ndarray) -> np.ndarray:
+    """Half-wave rectified spectral flux in the bass band.
+
+    Positive jumps in frame-to-frame log-energy capture rhythmic onsets /
+    beat attacks. Negative changes (energy decays) are zeroed out so only
+    the attack transients remain — this isolates the rhythm skeleton from
+    the overall energy contour.
+    """
+    if S_bass.size == 0:
+        return np.array([], dtype=np.float32)
+    energy = np.sum(S_bass**2, axis=0)
+    log_energy = np.log(np.maximum(energy, 1e-10))
+    flux = np.diff(log_energy, prepend=log_energy[0])
+    return np.maximum(flux, 0.0).astype(np.float32)
 
 
 def cross_correlate_patterns(
@@ -81,7 +104,7 @@ def dtw_distance(
                 around the projected path, not a global diagonal band.
 
     Returns:
-        (normalised_distance, cost_matrix (I×J))
+        (normalised_distance, cost_matrix (I x J))
     """
     a = np.asarray(a, dtype=np.float32).flatten()
     b = np.asarray(b, dtype=np.float32).flatten()
@@ -95,7 +118,7 @@ def dtw_distance(
 def frame_wise_similarity(
     energy_a: np.ndarray,
     energy_b: np.ndarray,
-    window_size: int = 3,
+    window_size: int = 8,
     search_radius: int = 8,
 ) -> np.ndarray:
     """Per-frame cosine similarity using local tempo-aligned search.
@@ -112,7 +135,8 @@ def frame_wise_similarity(
 
     Args:
         energy_a, energy_b: 1-D log-energy envelopes, float32.
-        window_size:         Half-width of the context window.
+        window_size:         Half-width of the context window (~186ms at 43fps
+                             captures beat-level rhythmic context).
         search_radius:       Half-width of search around aligned center in B.
 
     Returns:
@@ -128,7 +152,6 @@ def frame_wise_similarity(
     for i in range(n_a):
         sa = max(0, i - window_size)
         ea = min(n_a, i + window_size + 1)
-        # half-widths actually available on each side for frame i
         left_i = i - sa
         right_i = ea - i - 1
 
@@ -138,16 +161,12 @@ def frame_wise_similarity(
 
         best = -1.0
         for j in range(j_start, j_end + 1):
-            # Align the context window around j to the same shape as around i
             sa_j = max(0, j - left_i)
             ea_j = min(n_b, j + right_i + 1)
-            # Further clip so both windows are the same length
             l = min(ea - sa, ea_j - sa_j)
             wa = energy_a[sa : sa + l]
             wb = energy_b[sa_j : sa_j + l]
 
-            # Mean-center windows before similarity to avoid near-1 saturation
-            # on strictly positive energy envelopes.
             mean_a = 0.0
             mean_b = 0.0
             for k in range(l):
@@ -171,7 +190,6 @@ def frame_wise_similarity(
             if norm_a < 1e-8 or norm_b < 1e-8:
                 continue
 
-            # Correlation-like similarity in [-1, 1].
             sim = dot / (norm_a * norm_b)
             if sim > best:
                 best = sim
@@ -225,30 +243,53 @@ def detect_pattern_matches(
     return segments
 
 
+def _map_segment_to_b(seg: dict, n_a: int, n_b: int) -> tuple[int, int]:
+    """Map a segment from Song A's frame indices to corresponding Song B frames."""
+    denom = n_a - 1 if n_a > 1 else 1
+    ratio = (n_b - 1) / denom if denom > 0 else 1.0
+    start_b = int(round(seg["start_frame"] * ratio))
+    end_b = int(round(seg["end_frame"] * ratio))
+    return max(0, start_b), min(n_b, max(end_b, start_b + 1))
+
+
 def match_bass_patterns(
     S_bass_a: np.ndarray,
     S_bass_b: np.ndarray,
     use_dtw: bool = True,
     dtw_radius: int = 1,
-    # Deprecated — kept for one release so existing callers don't break.
-    # sr and hop_length are no longer used internally; pass them and a
-    # DeprecationWarning is raised but the call succeeds.
     sr: int | None = None,
     hop_length: int | None = None,
 ) -> PatternMatch:
     """Compare bass patterns between two spectrograms.
 
+    The scoring combines four independent measures to reduce inflated
+    similarity between unrelated songs:
+
+    1. **DTW on z-normalized energy** — elastic alignment of energy
+       *shape*, not absolute level.  Z-normalization removes loudness
+       bias that made different songs look similar.
+    2. **Energy frame similarity** — local windowed correlation of energy
+       envelopes with beat-sized context (window_size=8, ~370 ms).
+    3. **Onset/rhythm frame similarity** — same windowed correlation but
+       on half-wave-rectified spectral flux, isolating beat attacks from
+       the energy contour.
+    4. **Cross-correlation peak** — global lag-based agreement.
+
+    A power-curve (^1.5) compresses the blended score so that
+    moderate raw similarities map to lower displayed percentages,
+    giving more separation between genuinely similar and unrelated pairs.
+
     Args:
         S_bass_a, S_bass_b: Bass spectrograms, shape (n_freq, n_frames).
-        use_dtw:            Use fast_dtw for overall alignment score;
-                            otherwise use cross-correlation peak.
+        use_dtw:            Use fast_dtw for overall alignment score.
         dtw_radius:         FastDTW search radius forwarded to fast_dtw.
-        sr:                 Deprecated. No longer used. Will be removed.
-        hop_length:         Deprecated. No longer used. Will be removed.
+        sr:                 Deprecated. No longer used.
+        hop_length:         Deprecated. No longer used.
 
     Returns:
-        PatternMatch with scores, matched segments, correlation, and
-        per-frame similarity.
+        PatternMatch with scores, matched segments (mapped to both songs),
+        correlation, per-frame similarity, energy/onset envelopes, and
+        the adaptive threshold used for segment detection.
     """
     if sr is not None or hop_length is not None:
         warnings.warn(
@@ -258,56 +299,100 @@ def match_bass_patterns(
             DeprecationWarning,
             stacklevel=2,
         )
+
     energy_a = compute_bass_spectrogram_features(S_bass_a)
     energy_b = compute_bass_spectrogram_features(S_bass_b)
+    onset_a = compute_onset_envelope(S_bass_a)
+    onset_b = compute_onset_envelope(S_bass_b)
+
+    empty = PatternMatch(
+        overall_similarity=0.0,
+        matched_segments=[],
+        correlation=np.array([], dtype=np.float32),
+        lags=np.array([], dtype=np.int32),
+        frame_similarity=np.array([], dtype=np.float32),
+        energy_a=energy_a,
+        energy_b=energy_b,
+        onset_a=onset_a,
+        onset_b=onset_b,
+    )
 
     if energy_a.size == 0 or energy_b.size == 0:
-        return PatternMatch(
-            overall_similarity=0.0,
-            matched_segments=[],
-            correlation=np.array([], dtype=np.float32),
-            lags=np.array([], dtype=np.int32),
-            frame_similarity=np.array([], dtype=np.float32),
-        )
+        return empty
 
-    search_radius = max(6, int(0.03 * max(len(energy_a), len(energy_b))))
-    frame_sim = frame_wise_similarity(
+    n_a, n_b = len(energy_a), len(energy_b)
+
+    # Cap search radius to ~350ms (15 frames at ~43 fps).  The old formula
+    # grew to hundreds of frames for long songs, letting every frame find a
+    # spurious match somewhere in a 10-second window.
+    search_radius = min(15, max(6, int(0.01 * max(n_a, n_b))))
+    window_size = 8
+
+    energy_frame_sim = frame_wise_similarity(
         energy_a,
         energy_b,
-        window_size=3,
+        window_size=window_size,
         search_radius=search_radius,
     )
-    frame_sim_mean = float(np.mean(frame_sim)) if frame_sim.size > 0 else 0.0
+
+    onset_frame_sim = frame_wise_similarity(
+        onset_a,
+        onset_b,
+        window_size=window_size,
+        search_radius=search_radius,
+    )
+
+    # Weight rhythm higher — beat alignment is the strongest discriminator.
+    frame_sim = 0.35 * energy_frame_sim + 0.65 * onset_frame_sim
+    energy_mean = float(np.mean(energy_frame_sim)) if energy_frame_sim.size > 0 else 0.0
+    onset_mean = float(np.mean(onset_frame_sim)) if onset_frame_sim.size > 0 else 0.0
 
     correlation, lags = cross_correlate_patterns(energy_a, energy_b)
     corr_peak = float(np.max(correlation)) if correlation.size > 0 else 0.0
-    # Map cross-correlation from [-1, 1] to [0, 1] for score blending.
     corr_component = float(np.clip((corr_peak + 1.0) / 2.0, 0.0, 1.0))
 
     if use_dtw:
-        dist, _ = dtw_distance(energy_a, energy_b, window=dtw_radius)
+        a_std = float(np.std(energy_a))
+        b_std = float(np.std(energy_b))
+        energy_a_z = (energy_a - np.mean(energy_a)) / max(a_std, 1e-8)
+        energy_b_z = (energy_b - np.mean(energy_b)) / max(b_std, 1e-8)
+        dist, _ = dtw_distance(energy_a_z, energy_b_z, window=dtw_radius)
         dtw_component = 1.0 / (1.0 + dist) if not np.isinf(dist) else 0.0
-        # Blend global alignment (DTW) with local frame quality and
-        # correlation peak to reduce over-penalization of tempo/structure drift.
-        overall_sim = (
-            0.6 * dtw_component + 0.3 * frame_sim_mean + 0.1 * corr_component
+
+        raw_sim = (
+            0.25 * dtw_component
+            + 0.25 * energy_mean
+            + 0.35 * onset_mean
+            + 0.15 * corr_component
         )
     else:
-        overall_sim = 0.7 * corr_component + 0.3 * frame_sim_mean
+        raw_sim = 0.50 * corr_component + 0.25 * energy_mean + 0.25 * onset_mean
 
+    overall_sim = float(raw_sim**1.5)
+
+    # --- Segment detection with strict thresholds ---
+    # 85th percentile with a high floor (0.55) so only genuinely strong
+    # alignment passes; min_segment_length=40 (~1 s, roughly 2 beats at
+    # 120 BPM) rejects tiny spurious blips.
     adaptive_threshold = (
-        float(np.clip(np.percentile(frame_sim, 70), 0.45, 0.85))
+        float(np.clip(np.percentile(frame_sim, 85), 0.55, 0.85))
         if frame_sim.size > 0
-        else 0.5
+        else 0.6
     )
     matched = detect_pattern_matches(
         frame_sim,
         threshold=adaptive_threshold,
-        min_segment_length=3,
+        min_segment_length=40,
     )
 
-    # Safety guard: reject trivial "entire-song" matches when the global
-    # alignment evidence is not correspondingly strong.
+    for seg in matched:
+        start_b, end_b = _map_segment_to_b(seg, n_a, n_b)
+        seg["start_frame_b"] = start_b
+        seg["end_frame_b"] = end_b
+
+    # Drop weak segments and reject entire-song false positives.
+    matched = [s for s in matched if s["mean_similarity"] >= 0.55]
+
     if matched and frame_sim.size > 0:
         full_cover = [
             seg
@@ -318,10 +403,20 @@ def match_bass_patterns(
         if full_cover and (overall_sim < 0.98 or corr_component < 0.98):
             matched = [seg for seg in matched if seg not in full_cover]
 
+    # If the overall similarity is very low the songs are clearly different;
+    # any surviving segments are noise.
+    if overall_sim < 0.12:
+        matched = []
+
     return PatternMatch(
         overall_similarity=float(np.clip(overall_sim, 0.0, 1.0)),
         matched_segments=matched,
         correlation=correlation,
         lags=lags,
         frame_similarity=frame_sim,
+        energy_a=energy_a,
+        energy_b=energy_b,
+        onset_a=onset_a,
+        onset_b=onset_b,
+        threshold=adaptive_threshold,
     )
